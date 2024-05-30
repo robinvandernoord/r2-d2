@@ -1,11 +1,8 @@
 use std::collections::BTreeMap;
-use std::env;
 use std::path::Path;
-use std::process::exit;
 
 use dotenvy::from_path_iter;
-use pyo3::{Bound, pyfunction, pymodule, PyResult, Python, wrap_pyfunction};
-use pyo3::prelude::{PyAnyMethods, PyModule};
+use pyo3::prelude as pyo;
 use reqwest::Client;
 use reqwest::header::HeaderMap;
 
@@ -69,7 +66,8 @@ fn read_configfile(filename: &str) -> Option<BTreeMap<String, String>> {
     Some(config)
 }
 
-async fn _main() -> Result<i32, String> {
+
+async fn async_main_rs() -> Result<i32, String> {
     let r2d2 = R2D2Config::from_dot_r2()?;
     let client = Client::new();
     let url = format!("{}/usage?=null", r2d2.base_url());
@@ -80,7 +78,7 @@ async fn _main() -> Result<i32, String> {
 
     match request.send().await {
         Ok(resp) => {
-            println!("{}", resp.status().as_u16());
+            println!("{}", resp.status());
             match resp.text().await {
                 Ok(text) => {
                     println!("{text}");
@@ -97,38 +95,27 @@ async fn _main() -> Result<i32, String> {
     }
 }
 
-#[pyfunction]
-fn python_main(py: Python) -> PyResult<()> {
-    // This one includes python and the name of the wrapper script itself, e.g.
-    // `["/home/ferris/.venv/bin/python", "/home/ferris/.venv/bin/print_cli_args", "a", "b", "c"]`
-    println!("{:?}", env::args().collect::<Vec<_>>());
-    // This one includes only the name of the wrapper script itself, e.g.
-    // `["/home/ferris/.venv/bin/print_cli_args", "a", "b", "c"])`
-    println!(
-        "{:?}",
-        py.import_bound("sys")?
-            .getattr("argv")?
-            .extract::<Vec<String>>()?
-    );
-    Ok(())
+#[pyo::pyfunction]
+/// # Errors
+/// should be handled gracefully?
+pub fn main_rs(py: pyo::Python<'_>) -> pyo::PyResult<&pyo::PyAny> {
+    pyo3_asyncio::tokio::future_into_py(py, async {
+        let exit_code = match async_main_rs().await {
+            Ok(code) => {code}
+            Err(msg) => {
+                eprintln!("{msg}");
+                1
+            }
+        };
+
+        Ok(pyo::Python::with_gil(|_| exit_code))
+    })
 }
 
-#[pymodule]
-fn r2_d2(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_wrapped(wrap_pyfunction!(python_main))?;
-
+#[pyo::pymodule]
+/// # Errors
+/// should be handled gracefully?
+pub fn r2_d2(_py: pyo::Python, m: &pyo::PyModule) -> pyo::PyResult<()> {
+    m.add_function(pyo::wrap_pyfunction!(main_rs, m)?)?;
     Ok(())
 }
-
-// #[tokio::main]
-// async fn main() {
-//     match _main().await {
-//         Ok(code) => {
-//             exit(code)
-//         }
-//         Err(msg) => {
-//             eprintln!("{msg}");
-//             exit(1)
-//         }
-//     }
-// }
