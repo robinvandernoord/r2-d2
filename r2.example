@@ -1,0 +1,3 @@
+R2_ACCOUNT_ID = "xyz"
+R2_API_KEY = "aa_bb-cc"
+R2_BUCKET=some-bucket-here

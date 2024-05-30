@@ -1,0 +1,25 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "r2-d2"
+description = "Simple Client for Cloudflare R2 to manage Restic Backups"
+readme = "README.md"
+license = "MIT"
+keywords = []
+authors = [
+    { name = "Robin van der Noord", email = "robinvandernoord@gmail.com" },
+]
+
+
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+
+[tool.maturin]
+bindings = "bin"

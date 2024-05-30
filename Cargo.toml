@@ -1,0 +1,31 @@
+[package]
+name = "r2-d2"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+description = "Simple Client for Cloudflare R2 to manage Restic Backups"
+categories = ["development-tools", "command-line-interface", "command-line-utilities"]
+keywords = ["Python", "s3", "r2", "pip", "packaging"]
+repository = "https://github.com/robinvandernoord/uvx2"
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.37", features = ["full"] }
+dotenvy = "0.15"
+
+[lints.clippy]
+# categories:
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# specific ones:
+module_name_repetitions = "allow"
+future_not_send = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+cast_possible_wrap = "allow"
+cast_possible_truncation = "allow"
+multiple_crate_versions = "allow"
