@@ -1,8 +1,11 @@
 use std::collections::BTreeMap;
+use std::env;
 use std::path::Path;
 use std::process::exit;
 
 use dotenvy::from_path_iter;
+use pyo3::{Bound, pyfunction, pymodule, PyResult, Python, wrap_pyfunction};
+use pyo3::prelude::{PyAnyMethods, PyModule};
 use reqwest::Client;
 use reqwest::header::HeaderMap;
 
@@ -94,15 +97,38 @@ async fn _main() -> Result<i32, String> {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    match _main().await {
-        Ok(code) => {
-            exit(code)
-        }
-        Err(msg) => {
-            eprintln!("{msg}");
-            exit(1)
-        }
-    }
+#[pyfunction]
+fn python_main(py: Python) -> PyResult<()> {
+    // This one includes python and the name of the wrapper script itself, e.g.
+    // `["/home/ferris/.venv/bin/python", "/home/ferris/.venv/bin/print_cli_args", "a", "b", "c"]`
+    println!("{:?}", env::args().collect::<Vec<_>>());
+    // This one includes only the name of the wrapper script itself, e.g.
+    // `["/home/ferris/.venv/bin/print_cli_args", "a", "b", "c"])`
+    println!(
+        "{:?}",
+        py.import_bound("sys")?
+            .getattr("argv")?
+            .extract::<Vec<String>>()?
+    );
+    Ok(())
 }
+
+#[pymodule]
+fn r2_d2(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_wrapped(wrap_pyfunction!(python_main))?;
+
+    Ok(())
+}
+
+// #[tokio::main]
+// async fn main() {
+//     match _main().await {
+//         Ok(code) => {
+//             exit(code)
+//         }
+//         Err(msg) => {
+//             eprintln!("{msg}");
+//             exit(1)
+//         }
+//     }
+// }
