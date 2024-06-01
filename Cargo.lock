@@ -723,7 +723,10 @@ dependencies = [
  "pyo3",
  "pyo3-asyncio",
  "reqwest",
+ "serde",
+ "serde_json",
  "tokio",
+ "url",
 ]
 
 [[package]]
