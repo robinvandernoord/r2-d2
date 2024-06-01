@@ -1,20 +1,22 @@
+use crate::helpers::ResultToString;
+use dotenvy::from_path_iter;
+use reqwest::header::HeaderMap;
+use reqwest::{Client, RequestBuilder};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::BufReader;
 use std::path::Path;
-use dotenvy::from_path_iter;
-use reqwest::{Client, RequestBuilder};
-use reqwest::header::HeaderMap;
 use url::Url;
-use serde::{Serialize, Deserialize};
-use crate::helpers::ResultToString;
 
 fn get_from_config(
     config: &BTreeMap<String, String>,
     key: &str,
 ) -> Result<String, String> {
-    config.get(key).map_or_else(|| Err(format!("Key {key} could not be found in the config.")), |value| Ok(value.clone()))
+    config.get(key).map_or_else(
+        || Err(format!("Key {key} could not be found in the config.")),
+        |value| Ok(value.clone()),
+    )
 }
-
 
 fn read_configfile(path: &Path) -> Option<BTreeMap<String, String>> {
     let iter = from_path_iter(path).ok()?;
@@ -74,7 +76,8 @@ pub struct UsageResultData {
 
 trait SendAndHandle {
     async fn send_and_handle(self) -> Result<String, String>;
-    async fn send_and_parse<T: serde::de::DeserializeOwned>(self) -> Result<ApiResponse<T>, String>;
+    async fn send_and_parse<T: serde::de::DeserializeOwned>(self)
+        -> Result<ApiResponse<T>, String>;
 }
 
 impl SendAndHandle for RequestBuilder {
@@ -85,21 +88,17 @@ impl SendAndHandle for RequestBuilder {
             Ok(resp) => {
                 println!("{}", resp.status());
                 match resp.text().await {
-                    Ok(text) => {
-                        Ok(text)
-                    }
-                    Err(e) => Err(
-                        format!("Error reading response text: {e}")
-                    ),
+                    Ok(text) => Ok(text),
+                    Err(e) => Err(format!("Error reading response text: {e}")),
                 }
-            }
-            Err(e) => Err(
-                format!("Request error: {e}")
-            ),
+            },
+            Err(e) => Err(format!("Request error: {e}")),
         }
     }
 
-    async fn send_and_parse<T: serde::de::DeserializeOwned>(self) -> Result<ApiResponse<T>, String> {
+    async fn send_and_parse<T: serde::de::DeserializeOwned>(
+        self
+    ) -> Result<ApiResponse<T>, String> {
         let text = self.send_and_handle().await?;
 
         let buffer = BufReader::new(text.as_bytes());
@@ -112,7 +111,6 @@ impl SendAndHandle for RequestBuilder {
     }
 }
 
-
 pub struct R2D2 {
     account_id: String,
     apikey: String,
@@ -123,13 +121,11 @@ pub struct R2D2 {
 impl R2D2 {
     pub fn from_path(path: &Path) -> Result<Self, String> {
         if let Some(config) = read_configfile(path) {
-            Ok(
-                Self {
-                    account_id: get_from_config(&config, "R2_ACCOUNT_ID")?,
-                    apikey: get_from_config(&config, "R2_API_KEY")?,
-                    bucket: get_from_config(&config, "R2_BUCKET")?,
-                }
-            )
+            Ok(Self {
+                account_id: get_from_config(&config, "R2_ACCOUNT_ID")?,
+                apikey: get_from_config(&config, "R2_API_KEY")?,
+                bucket: get_from_config(&config, "R2_BUCKET")?,
+            })
         } else {
             Err(format!("Invalid config file {}", ".r2"))
         }
@@ -148,15 +144,24 @@ impl R2D2 {
     }
 
     fn _base_url(&self) -> String {
-        format!("https://api.cloudflare.com/client/v4/accounts/{}/r2/buckets/{}/", self.account_id, self.bucket)
+        format!(
+            "https://api.cloudflare.com/client/v4/accounts/{}/r2/buckets/{}/",
+            self.account_id, self.bucket
+        )
     }
 
-    pub fn build_url(&self, endpoint: &str) -> Option<Url> {
+    pub fn build_url(
+        &self,
+        endpoint: &str,
+    ) -> Option<Url> {
         let base = Url::parse(&self._base_url()).ok()?;
         base.join(endpoint).ok()
     }
 
-    pub fn request(&self, endpoint: &str) -> Option<RequestBuilder> {
+    pub fn request(
+        &self,
+        endpoint: &str,
+    ) -> Option<RequestBuilder> {
         let client = Client::new();
         let url = self.build_url(endpoint)?.to_string();
         let request = client.get(url);
