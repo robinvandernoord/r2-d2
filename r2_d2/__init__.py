@@ -1,5 +1,14 @@
 import asyncio
-from .r2_d2 import main_rs # src/lib.rs
+
+from .r2_d2 import *  # src/lib.rs
+
+
+async def usage_async() -> R2Usage:
+    return await usage()
+
+
+def usage_sync() -> R2Usage:
+    return asyncio.run(usage_async())
 
 
 async def async_main_py():
@@ -14,7 +23,11 @@ def main():
     Sync entrypoint.
     Using asyncio allows using async rust code (via tokio).
     """
+    print(
+        repr(usage_sync())
+    )
     asyncio.run(async_main_py())
+
 
 if __name__ == "__main__":
     main()

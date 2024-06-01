@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::BufReader;
 use std::path::Path;
 use dotenvy::from_path_iter;
 use reqwest::{Client, RequestBuilder};
@@ -73,6 +74,7 @@ pub struct UsageResultData {
 
 trait SendAndHandle {
     async fn send_and_handle(self) -> Result<String, String>;
+    async fn send_and_parse<T: serde::de::DeserializeOwned>(self) -> Result<ApiResponse<T>, String>;
 }
 
 impl SendAndHandle for RequestBuilder {
@@ -95,6 +97,18 @@ impl SendAndHandle for RequestBuilder {
                 format!("Request error: {e}")
             ),
         }
+    }
+
+    async fn send_and_parse<T: serde::de::DeserializeOwned>(self) -> Result<ApiResponse<T>, String> {
+        let text = self.send_and_handle().await?;
+
+        let buffer = BufReader::new(text.as_bytes());
+        // normally, `serde_json::from_string` expects &str but that requires a lifetime
+        // and `text` doesn't live that long.
+        // So using `serde owned` with a buffer works better in this scenario.
+        let result: ApiResponse<T> = serde_json::de::from_reader(buffer).map_err_to_string()?;
+
+        Ok(result)
     }
 }
 
@@ -165,10 +179,6 @@ impl R2D2 {
             return Err(format!("Request for '{}' could not be set up.", "usage"));
         };
 
-        let text = request.send_and_handle().await?;
-
-        let result: ApiResponse<UsageResultData> = serde_json::from_str(&text).map_err_to_string()?;
-
-        Ok(result)
+        request.send_and_parse().await
     }
 }
