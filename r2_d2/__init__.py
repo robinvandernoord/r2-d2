@@ -35,9 +35,9 @@ def main():
     print(
         repr(usage_sync())
     )
-    error_sync()
+    # error_sync()
 
-    main_py_sync()
+    # main_py_sync()
 
 
 if __name__ == "__main__":

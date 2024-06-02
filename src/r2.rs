@@ -1,5 +1,7 @@
-use crate::helpers::ResultToString;
+use crate::helpers::{IntoPythonError, ResultToString};
 use dotenvy::from_path_iter;
+use pyo3::exceptions::PyValueError;
+use pyo3::PyResult;
 use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
@@ -33,45 +35,75 @@ fn read_configfile(path: &Path) -> Option<BTreeMap<String, String>> {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApiResponse<T> {
-    success: bool,
-    errors: Option<Vec<ApiError>>,
-    messages: Option<Vec<String>>,
-    result: Option<T>,
+    pub success: bool,
+    pub errors: Option<Vec<ApiError>>,
+    pub messages: Option<Vec<String>>,
+    pub result: Option<T>,
+}
+
+impl<T> IntoPythonError for ApiResponse<T> {
+    fn to_python_error(
+        &self,
+        hint: &str,
+    ) -> PyResult<()> {
+        if self.success {
+            return Ok(());
+        }
+
+        Err(
+            self.errors.as_ref().map_or_else(|| PyValueError::new_err(format!(
+                "Something went wrong for {hint}, but no specific information was provided."
+            )), |errors| {
+                if errors.is_empty() {
+                    PyValueError::new_err(format!("Something went wrong for {hint}, but no specific information was provided."))
+                } else {
+                    let mut msg = format!("[{hint}] ");
+
+                    for error in errors {
+                        msg.push_str(&error.message);
+                        msg.push('\n');
+                    }
+
+                    PyValueError::new_err(msg)
+                }
+            })
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApiError {
-    code: i32,
-    message: String,
+    pub code: i32,
+    pub message: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UsageResultData {
-    end: Option<String>,
+    pub end: Option<String>,
 
     #[serde(rename = "payloadSize")]
-    payload_size: Option<String>,
+    pub payload_size: Option<String>,
 
     #[serde(rename = "metadataSize")]
-    metadata_size: Option<String>,
+    pub metadata_size: Option<String>,
 
     #[serde(rename = "objectCount")]
-    object_count: Option<String>,
+    pub object_count: Option<String>,
 
     #[serde(rename = "uploadCount")]
-    upload_count: Option<String>,
+    pub upload_count: Option<String>,
 
     #[serde(rename = "infrequentAccessPayloadSize")]
-    infrequent_access_payload_size: Option<String>,
+    pub infrequent_access_payload_size: Option<String>,
 
     #[serde(rename = "infrequentAccessMetadataSize")]
-    infrequent_access_metadata_size: Option<String>,
+    pub infrequent_access_metadata_size: Option<String>,
 
     #[serde(rename = "infrequentAccessObjectCount")]
-    infrequent_access_object_count: Option<String>,
+    pub infrequent_access_object_count: Option<String>,
 
     #[serde(rename = "infrequentAccessUploadCount")]
-    infrequent_access_upload_count: Option<String>,
+    pub infrequent_access_upload_count: Option<String>,
 }
 
 trait SendAndHandle {

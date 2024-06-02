@@ -1,4 +1,8 @@
+use std::future::Future;
 use std::path::PathBuf;
+
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::{IntoPy, PyAny, PyErr, PyObject, PyResult, Python};
 
 pub trait ResultToString<T, E> {
     fn map_err_to_string(self) -> Result<T, String>;
@@ -40,5 +44,49 @@ pub trait PathToString {
 impl PathToString for PathBuf {
     fn to_string(self) -> String {
         self.into_os_string().into_string().unwrap_or_default()
+    }
+}
+
+pub fn result_to_py<T: IntoPy<PyObject> + Send + 'static, E: Into<PyErr> + Send + 'static>(
+    py: Python<'_>,
+    future: impl Future<Output = Result<T, E>> + Send + 'static,
+) -> PyResult<&'_ PyAny> {
+    pyo3_asyncio::tokio::future_into_py(py, async move {
+        match future.await {
+            Ok(obj) => Python::with_gil(|py| Ok(obj.into_py(py))),
+            Err(exc) => Python::with_gil(|_py| Err(exc.into())),
+        }
+    })
+}
+
+pub trait IntoPythonError {
+    fn to_python_error(
+        &self,
+        hint: &str,
+    ) -> PyResult<()>;
+}
+
+pub trait UnwrapIntoPythonError<T> {
+    fn unwrap_or_raise(self) -> PyResult<T>;
+}
+
+impl<T> IntoPythonError for Result<T, String> {
+    fn to_python_error(
+        &self,
+        _: &str,
+    ) -> PyResult<()> {
+        match self {
+            Ok(_) => Ok(()),
+            Err(msg) => Err(PyRuntimeError::new_err(msg.clone())),
+        }
+    }
+}
+
+impl<T> UnwrapIntoPythonError<T> for Result<T, String> {
+    fn unwrap_or_raise(self) -> PyResult<T> {
+        match self {
+            Ok(inner) => Ok(inner),
+            Err(msg) => Err(PyRuntimeError::new_err(msg)),
+        }
     }
 }
