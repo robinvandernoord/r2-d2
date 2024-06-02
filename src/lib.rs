@@ -1,7 +1,8 @@
 use crate::r2::R2D2;
 use pyo3::exceptions::PyValueError;
-use pyo3::{prelude as pyo, pyclass, pymethods, IntoPy, Python};
-use pyo3_asyncio::tokio::future_into_py;
+use pyo3::prelude::PyModule;
+use pyo3::{prelude as pyo, pyclass, pymethods, IntoPy, PyAny, PyErr, PyObject, PyResult, Python};
+use std::future::Future;
 
 pub mod helpers;
 pub mod r2;
@@ -50,56 +51,73 @@ impl R2Usage {
     }
 }
 
-pub async fn usage_async() -> pyo::PyResult<R2Usage> {
-    // Err(PyValueError::new_err("Something went wrong mate"))
-
-    Ok(
-        R2Usage {
-            end: None,
-            payload_size: 0,
-            metadata_size: 0,
-            object_count: 0,
-            upload_count: 0,
-            infrequent_access_payload_size: 0,
-            infrequent_access_metadata_size: 0,
-            infrequent_access_object_count: 0,
-            infrequent_access_upload_count: 0,
-        }
-    )
+#[allow(clippy::unused_async)]
+pub async fn error_async() -> PyResult<R2Usage> {
+    Err(PyValueError::new_err("Something went wrong mate"))
 }
 
-#[pyo::pyfunction]
-pub fn usage(py: Python<'_>) -> pyo::PyResult<&pyo::PyAny> {
-    future_into_py(py, async move {
-        match usage_async().await {
-            Ok(obj) => Python::with_gil(|_py| Ok(obj)),
-            Err(exc) => Python::with_gil(|_py| Err(exc)),
+#[allow(clippy::unused_async)]
+pub async fn usage_async() -> PyResult<R2Usage> {
+    Ok(R2Usage {
+        end: None,
+        payload_size: 0,
+        metadata_size: 0,
+        object_count: 0,
+        upload_count: 0,
+        infrequent_access_payload_size: 0,
+        infrequent_access_metadata_size: 0,
+        infrequent_access_object_count: 0,
+        infrequent_access_upload_count: 0,
+    })
+}
+
+fn result_to_py<T: IntoPy<PyObject> + Send + 'static, E: Into<PyErr> + Send + 'static>(
+    py: Python<'_>,
+    future: impl Future<Output = Result<T, E>> + Send + 'static,
+) -> PyResult<&'_ PyAny> {
+    pyo3_asyncio::tokio::future_into_py(py, async move {
+        match future.await {
+            Ok(obj) => Python::with_gil(|py| Ok(obj.into_py(py))),
+            Err(exc) => Python::with_gil(|_py| Err(exc.into())),
         }
     })
 }
 
 #[pyo::pyfunction]
-pub fn main_rs(py: pyo::Python<'_>) -> pyo::PyResult<&pyo::PyAny> {
+pub fn usage(py: Python<'_>) -> PyResult<&PyAny> {
+    let future = usage_async();
+
+    result_to_py(py, future)
+}
+
+#[pyo::pyfunction]
+pub fn error(py: Python<'_>) -> PyResult<&PyAny> {
+    let future = error_async();
+
+    result_to_py(py, future)
+}
+
+#[pyo::pyfunction]
+pub fn main_rs(py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::tokio::future_into_py(py, async {
-        let exit_code = match async_main_rs().await {
-            Ok(code) => code,
-            Err(msg) => {
-                eprintln!("{msg}");
-                1
-            },
-        };
-        Ok(pyo::Python::with_gil(|_| exit_code))
+        let exit_code = async_main_rs().await.unwrap_or_else(|msg| {
+            eprintln!("{msg}");
+            1
+        });
+
+        Ok(Python::with_gil(|_| exit_code))
     })
 }
 
 #[pyo::pymodule]
 pub fn r2_d2(
-    _py: pyo::Python,
-    m: &pyo::PyModule,
-) -> pyo::PyResult<()> {
+    _py: Python,
+    m: &PyModule,
+) -> PyResult<()> {
     m.add_class::<R2Usage>()?;
 
     m.add_function(pyo::wrap_pyfunction!(main_rs, m)?)?;
     m.add_function(pyo::wrap_pyfunction!(usage, m)?)?;
+    m.add_function(pyo::wrap_pyfunction!(error, m)?)?;
     Ok(())
 }
