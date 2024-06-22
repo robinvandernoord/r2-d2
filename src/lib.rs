@@ -4,7 +4,8 @@ use pyo3::{prelude as pyo, PyAny, PyResult, Python};
 
 use crate::commands::usage::usage;
 use crate::commands::usage::R2Usage;
-use crate::helpers::result_to_py;
+use crate::helpers::future_pyresult_to_py;
+use crate::r2::{ListOptions, R2D2};
 
 pub mod commands;
 pub mod helpers;
@@ -12,6 +13,10 @@ pub mod r2;
 
 #[allow(clippy::unused_async)]
 async fn async_main_rs() -> Result<i32, String> {
+    let r2 = R2D2::guess()?;
+
+    let _ = dbg!(r2.list(Some(ListOptions::default())).await);
+
     // todo: clap
     Ok(0)
 }
@@ -25,7 +30,7 @@ pub async fn error_async() -> PyResult<R2Usage> {
 pub fn error(py: Python<'_>) -> PyResult<&PyAny> {
     let future = error_async();
 
-    result_to_py(py, future)
+    future_pyresult_to_py(py, future)
 }
 
 #[pyo::pyfunction]

@@ -1,12 +1,13 @@
-use crate::helpers::{result_to_py, IntoPythonError, UnwrapIntoPythonError};
-use crate::r2::R2D2;
 use pyo3::{prelude as pyo, pyclass, pymethods, PyAny, PyResult, Python};
+
+use crate::helpers::{future_pyresult_to_py, sotoi, UnwrapIntoPythonError};
+use crate::r2::{UsageResultData, R2D2};
 
 #[pyclass(module = "r2_d2")]
 #[derive(Debug)]
 pub struct R2Usage {
     #[pyo3(get)]
-    pub end: Option<String>,
+    pub end: String,
     #[pyo3(get)]
     pub payload_size: i32,
     #[pyo3(get)]
@@ -25,6 +26,22 @@ pub struct R2Usage {
     pub infrequent_access_upload_count: i32,
 }
 
+impl From<UsageResultData> for R2Usage {
+    fn from(value: UsageResultData) -> Self {
+        Self {
+            end: value.end.unwrap_or_default(),
+            payload_size: sotoi(value.payload_size),
+            metadata_size: sotoi(value.metadata_size),
+            object_count: sotoi(value.object_count),
+            upload_count: sotoi(value.upload_count),
+            infrequent_access_payload_size: sotoi(value.infrequent_access_payload_size),
+            infrequent_access_metadata_size: sotoi(value.infrequent_access_metadata_size),
+            infrequent_access_object_count: sotoi(value.infrequent_access_object_count),
+            infrequent_access_upload_count: sotoi(value.infrequent_access_upload_count),
+        }
+    }
+}
+
 #[pymethods]
 impl R2Usage {
     pub fn __str__(&self) -> String {
@@ -37,29 +54,17 @@ impl R2Usage {
 
 #[allow(clippy::unused_async)]
 pub async fn usage_async() -> PyResult<R2Usage> {
-    let r2d2 = R2D2::from_dot_r2().unwrap_or_raise()?;
+    let r2d2 = R2D2::guess().unwrap_or_raise()?;
 
-    let response = r2d2.usage().await.unwrap_or_raise()?;
-    response.to_python_error("usage")?;
+    let usage = r2d2.usage().await?;
+    let usage_py: R2Usage = usage.into();
 
-    println!("{response:?}");
-
-    Ok(R2Usage {
-        end: None,
-        payload_size: 0,
-        metadata_size: 0,
-        object_count: 0,
-        upload_count: 0,
-        infrequent_access_payload_size: 0,
-        infrequent_access_metadata_size: 0,
-        infrequent_access_object_count: 0,
-        infrequent_access_upload_count: 0,
-    })
+    Ok(usage_py)
 }
 
 #[pyo::pyfunction]
 pub fn usage(py: Python<'_>) -> PyResult<&PyAny> {
     let future = usage_async();
 
-    result_to_py(py, future)
+    future_pyresult_to_py(py, future)
 }

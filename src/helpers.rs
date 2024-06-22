@@ -1,8 +1,30 @@
 use std::future::Future;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{IntoPy, PyAny, PyErr, PyObject, PyResult, Python};
+
+/// ASCII to Integer
+pub fn atoi(ascii: &str) -> i32 {
+    i32::from_str(ascii).unwrap_or_default()
+}
+
+/// String to Integer
+#[allow(clippy::needless_pass_by_value)]
+pub fn stoi(ascii: String) -> i32 {
+    atoi(&ascii)
+}
+
+/// ASCII Option to Integer
+pub fn aotoi(ascii_option: Option<&str>) -> i32 {
+    atoi(ascii_option.unwrap_or_default())
+}
+
+/// String Option to Integer
+pub fn sotoi(ascii_option: Option<String>) -> i32 {
+    stoi(ascii_option.unwrap_or_default())
+}
 
 pub trait ResultToString<T, E> {
     fn map_err_to_string(self) -> Result<T, String>;
@@ -47,7 +69,10 @@ impl PathToString for PathBuf {
     }
 }
 
-pub fn result_to_py<T: IntoPy<PyObject> + Send + 'static, E: Into<PyErr> + Send + 'static>(
+pub fn future_pyresult_to_py<
+    T: IntoPy<PyObject> + Send + 'static,
+    E: Into<PyErr> + Send + 'static,
+>(
     py: Python<'_>,
     future: impl Future<Output = Result<T, E>> + Send + 'static,
 ) -> PyResult<&'_ PyAny> {
@@ -59,34 +84,28 @@ pub fn result_to_py<T: IntoPy<PyObject> + Send + 'static, E: Into<PyErr> + Send 
     })
 }
 
-pub trait IntoPythonError {
+pub trait IntoPythonError<T> {
     fn to_python_error(
-        &self,
+        self,
         hint: &str,
-    ) -> PyResult<()>;
+    ) -> PyResult<T>;
 }
 
 pub trait UnwrapIntoPythonError<T> {
     fn unwrap_or_raise(self) -> PyResult<T>;
 }
 
-impl<T> IntoPythonError for Result<T, String> {
+impl<T> IntoPythonError<T> for Result<T, String> {
     fn to_python_error(
-        &self,
+        self,
         _: &str,
-    ) -> PyResult<()> {
-        match self {
-            Ok(_) => Ok(()),
-            Err(msg) => Err(PyRuntimeError::new_err(msg.clone())),
-        }
+    ) -> PyResult<T> {
+        self.map_err(PyRuntimeError::new_err)
     }
 }
 
 impl<T> UnwrapIntoPythonError<T> for Result<T, String> {
     fn unwrap_or_raise(self) -> PyResult<T> {
-        match self {
-            Ok(inner) => Ok(inner),
-            Err(msg) => Err(PyRuntimeError::new_err(msg)),
-        }
+        self.map_err(PyRuntimeError::new_err)
     }
 }

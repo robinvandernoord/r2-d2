@@ -32,12 +32,12 @@ def main():
     Sync entrypoint.
     Using asyncio allows using async rust code (via tokio).
     """
-    print(
-        repr(usage_sync())
-    )
+    # print(
+    #     repr(usage_sync())
+    # )
     # error_sync()
 
-    # main_py_sync()
+    main_py_sync()
 
 
 if __name__ == "__main__":

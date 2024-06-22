@@ -2,7 +2,7 @@ from typing import Optional, Protocol
 
 
 class R2Usage(Protocol):
-    end: Optional
+    end: str
     payload_size: int
     metadata_size: int
     object_count: int
