@@ -1,21 +1,54 @@
+use crate::commands::usage::usage;
+use crate::commands::usage::R2Usage;
+use crate::helpers::{future_pyresult_to_py, ResultToString};
+use crate::r2::{ListOptions, R2D2};
+use futures::future;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::PyModule;
 use pyo3::{prelude as pyo, PyAny, PyResult, Python};
-
-use crate::commands::usage::usage;
-use crate::commands::usage::R2Usage;
-use crate::helpers::future_pyresult_to_py;
-use crate::r2::{ListOptions, R2D2};
+use std::collections::BTreeMap;
 
 pub mod commands;
 pub mod helpers;
 pub mod r2;
 
+async fn gather_usage_info(r2: &R2D2) -> Result<String, String> {
+    // todo: move elsewhere
+    // 1. list buckets
+    // 2. gather usage data
+    // 3. return table (str)
+    let buckets = r2
+        .list(Some(ListOptions::default()))
+        .await
+        .map_err_to_string()?;
+
+    let bucket_names: Vec<String> = buckets.into_iter().map(|bucket| bucket.name).collect();
+
+    let promises: Vec<_> = bucket_names
+        .iter()
+        .map(|bucket_name| r2.usage(Some(bucket_name.clone())))
+        .collect();
+
+    let results = future::join_all(promises).await;
+
+    let map: BTreeMap<_, R2Usage> = bucket_names
+        .into_iter()
+        .zip(results)
+        // only keep Ok values, turn from UsageResultData into R2Usage
+        .filter_map(|(key, value)| value.map_or(None, |value| Some((key, value.into()))))
+        .collect();
+
+    dbg!(map);
+
+    Ok(String::new())
+}
+
 #[allow(clippy::unused_async)]
 async fn async_main_rs() -> Result<i32, String> {
     let r2 = R2D2::guess()?;
 
-    let _ = dbg!(r2.list(Some(ListOptions::default())).await);
+    // subcommand 'overview':
+    dbg!(gather_usage_info(&r2).await?);
 
     // todo: clap
     Ok(0)

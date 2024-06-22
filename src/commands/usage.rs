@@ -56,7 +56,7 @@ impl R2Usage {
 pub async fn usage_async() -> PyResult<R2Usage> {
     let r2d2 = R2D2::guess().unwrap_or_raise()?;
 
-    let usage = r2d2.usage().await?;
+    let usage = r2d2.usage(None).await?;
     let usage_py: R2Usage = usage.into();
 
     Ok(usage_py)

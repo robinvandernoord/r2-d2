@@ -123,15 +123,15 @@ pub struct UsageResultData {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BucketResultData {
-    buckets: Vec<BucketListData>,
+    pub buckets: Vec<BucketListData>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BucketListData {
-    name: String,
-    creation_date: String,
-    location: Option<String>,
-    storage_class: Option<String>,
+    pub name: String,
+    pub creation_date: String,
+    pub location: Option<String>,
+    pub storage_class: Option<String>,
 }
 
 trait SendAndHandle {
@@ -344,8 +344,11 @@ impl R2D2 {
 
     // medium level (api endpoints):
 
-    pub async fn _usage(&self) -> Result<ApiResponse<UsageResultData>, String> {
-        let Some(bucket) = &self.bucket else {
+    pub async fn _usage(
+        &self,
+        bucket: Option<String>,
+    ) -> Result<ApiResponse<UsageResultData>, String> {
+        let Some(bucket) = bucket.as_ref().or(self.bucket.as_ref()) else {
             return Err("Can't use `usage()` without a bucket!".to_string());
         };
 
@@ -357,8 +360,11 @@ impl R2D2 {
     }
 
     /// Show usage for current bucket
-    pub async fn usage(&self) -> PyResult<UsageResultData> {
-        self._usage()
+    pub async fn usage(
+        &self,
+        bucket: Option<String>,
+    ) -> PyResult<UsageResultData> {
+        self._usage(bucket)
             .await
             .to_python_error("usage")?
             .to_python_error("usage")
