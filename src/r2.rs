@@ -157,9 +157,6 @@ impl SendAndHandle for RequestBuilder {
         self
     ) -> Result<ApiResponse<T>, String> {
         let text = self.send_and_handle().await?;
-
-        dbg!(&text);
-
         let buffer = BufReader::new(text.as_bytes());
         // normally, `serde_json::from_string` expects &str but that requires a lifetime
         // and `text` doesn't live that long.

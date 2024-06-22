@@ -16,17 +16,20 @@ name = "r2_d2"
 crate-type = ["cdylib"]
 
 [dependencies]
+# note - pyo3 and pyo3-asyncio MUST Have the same version!
 pyo3 = { version = "0.20", features = ["abi3-py38", "extension-module"] }
 pyo3-asyncio = { version = "0.20", features = ["tokio-runtime"] }
-tokio = { version = "1.37", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.38", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 dotenvy = "0.15"
-url = "2.5.0"
+url = "2.5"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
-futures = "0.3.30"
-
+futures = "0.3"
+tabled = {version = "0.15", features = ["ansi"]}
+byte-unit = "5.1"
+owo-colors = "4.0"
 
 [lints.clippy]
 # categories:

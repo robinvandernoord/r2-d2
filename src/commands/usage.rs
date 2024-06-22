@@ -9,21 +9,21 @@ pub struct R2Usage {
     #[pyo3(get)]
     pub end: String,
     #[pyo3(get)]
-    pub payload_size: i32,
+    pub payload_size: i64,
     #[pyo3(get)]
-    pub metadata_size: i32,
+    pub metadata_size: i64,
     #[pyo3(get)]
-    pub object_count: i32,
+    pub object_count: i64,
     #[pyo3(get)]
-    pub upload_count: i32,
+    pub upload_count: i64,
     #[pyo3(get)]
-    pub infrequent_access_payload_size: i32,
+    pub infrequent_access_payload_size: i64,
     #[pyo3(get)]
-    pub infrequent_access_metadata_size: i32,
+    pub infrequent_access_metadata_size: i64,
     #[pyo3(get)]
-    pub infrequent_access_object_count: i32,
+    pub infrequent_access_object_count: i64,
     #[pyo3(get)]
-    pub infrequent_access_upload_count: i32,
+    pub infrequent_access_upload_count: i64,
 }
 
 impl From<UsageResultData> for R2Usage {

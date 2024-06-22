@@ -6,23 +6,23 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::{IntoPy, PyAny, PyErr, PyObject, PyResult, Python};
 
 /// ASCII to Integer
-pub fn atoi(ascii: &str) -> i32 {
-    i32::from_str(ascii).unwrap_or_default()
+pub fn atoi(ascii: &str) -> i64 {
+    i64::from_str(ascii).unwrap_or_default()
 }
 
 /// String to Integer
 #[allow(clippy::needless_pass_by_value)]
-pub fn stoi(ascii: String) -> i32 {
+pub fn stoi(ascii: String) -> i64 {
     atoi(&ascii)
 }
 
 /// ASCII Option to Integer
-pub fn aotoi(ascii_option: Option<&str>) -> i32 {
+pub fn aotoi(ascii_option: Option<&str>) -> i64 {
     atoi(ascii_option.unwrap_or_default())
 }
 
 /// String Option to Integer
-pub fn sotoi(ascii_option: Option<String>) -> i32 {
+pub fn sotoi(ascii_option: Option<String>) -> i64 {
     stoi(ascii_option.unwrap_or_default())
 }
 
