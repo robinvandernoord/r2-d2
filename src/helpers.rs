@@ -4,6 +4,9 @@ use std::str::FromStr;
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::{IntoPy, PyAny, PyErr, PyObject, PyResult, Python};
+use tabled::settings as table;
+use tabled::settings::object::{Columns, Rows};
+use tabled::{Table, Tabled};
 
 /// ASCII to Integer
 pub fn atoi(ascii: &str) -> i64 {
@@ -24,6 +27,22 @@ pub fn aotoi(ascii_option: Option<&str>) -> i64 {
 /// String Option to Integer
 pub fn sotoi(ascii_option: Option<String>) -> i64 {
     stoi(ascii_option.unwrap_or_default())
+}
+
+pub fn print_table<T: Tabled>(rows: &Vec<T>) {
+    let table_config = table::Settings::default()
+        .with(table::Style::rounded())
+        // .with(table::Padding::new(2, 2, 1, 1))
+        ;
+    let mut table = Table::new(rows);
+    table.with(table_config);
+    table.modify(Columns::last(), table::Alignment::right());
+    table.with(table::themes::Colorization::exact(
+        [table::Color::BG_BRIGHT_BLACK],
+        Rows::last(),
+    ));
+
+    println!("{table}");
 }
 
 pub trait ResultToString<T, E> {

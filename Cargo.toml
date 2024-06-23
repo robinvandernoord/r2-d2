@@ -31,6 +31,15 @@ tabled = {version = "0.15", features = ["ansi"]}
 byte-unit = "5.1"
 owo-colors = "4.0"
 
+# aws:
+rust-s3 = "0.34"
+aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.38", features = ["rt-tokio", "behavior-version-latest"] }
+aws-smithy-runtime = { version = "1.6" }
+aws-smithy-runtime-api = { version = "1.7", features = ["client"] }
+aws-smithy-types = { version = "1.2", features = ["http-body-0-4-x"] }
+aws-credential-types = {version = "1.2"}
+
 [lints.clippy]
 # categories:
 pedantic = { level = "warn", priority = -1 }

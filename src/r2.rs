@@ -1,4 +1,8 @@
+use crate::commands::list::ListOptions;
 use crate::helpers::{IntoPythonError, ResultToString};
+use aws_credential_types::provider::error::CredentialsError;
+use aws_credential_types::{provider, Credentials};
+use aws_sdk_s3::config::ProvideCredentials;
 use dotenvy::from_path_iter;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::PyResult;
@@ -7,7 +11,7 @@ use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::io::BufReader;
 use std::path::Path;
 use url::Url;
@@ -210,46 +214,12 @@ pub fn to_query_part<T: Into<String>>(
     format!("{}={}", key, value.into())
 }
 
-#[derive(Debug, Default)]
-pub struct ListOptions {
-    cursor: Option<String>,
-    direction: Option<Direction>,
-    order: Option<String>,
-    per_page: Option<u32>,
-    start_after: Option<String>,
-}
-
-impl QueryString for ListOptions {
-    fn to_query(&self) -> String {
-        let mut parts = vec![];
-
-        if let Some(cursor) = &self.cursor {
-            parts.push(to_query_part("cursor", cursor));
-        }
-
-        if let Some(direction) = &self.direction {
-            parts.push(to_query_part("direction", direction.to_string()));
-        }
-
-        if let Some(order) = &self.order {
-            parts.push(to_query_part("order", order));
-        }
-
-        if let Some(per_page) = &self.per_page {
-            parts.push(to_query_part("per_page", per_page.to_string()));
-        }
-
-        if let Some(start_after) = &self.start_after {
-            parts.push(to_query_part("start_after", start_after));
-        }
-
-        parts.join("&")
-    }
-}
-
+#[derive(Debug)]
 pub struct R2D2 {
     account_id: String,
     apikey: String,
+    aws_access_key_id: Option<String>,
+    aws_secret_access_key: Option<String>,
     pub bucket: Option<String>,
     // key id and secret?
 }
@@ -263,6 +233,8 @@ impl R2D2 {
                 account_id: get_from_config(&config, "R2_ACCOUNT_ID")?,
                 apikey: get_from_config(&config, "R2_API_KEY")?,
                 bucket: get_from_config(&config, "R2_BUCKET").ok(),
+                aws_access_key_id: get_from_config(&config, "R2_ACCESS_KEY_ID").ok(),
+                aws_secret_access_key: get_from_config(&config, "R2_SECRET_ACCESS_KEY").ok(),
             })
         } else {
             Err(format!("Invalid config file {}", ".r2"))
@@ -288,6 +260,8 @@ impl R2D2 {
             account_id: get_from_env("R2_ACCOUNT_ID")?,
             apikey: get_from_env("R2_API_KEY")?,
             bucket: get_from_env("R2_BUCKET").ok(),
+            aws_access_key_id: get_from_env("R2_ACCESS_KEY_ID").ok(),
+            aws_secret_access_key: get_from_env("R2_SECRET_ACCESS_KEY").ok(),
         })
     }
 
@@ -299,6 +273,24 @@ impl R2D2 {
             .map_err(|e| {
                 format!("No config could be found (tried .r2, .env, environment variables) - {e}")
             })
+    }
+
+    pub fn bucket(
+        &self,
+        bucket: Option<String>,
+    ) -> Result<String, String> {
+        let Some(bucket) = bucket.as_ref().or(self.bucket.as_ref()) else {
+            return Err("Bucket (`R2_BUCKET`) required for this operation.".to_string());
+        };
+
+        Ok(bucket.to_string())
+    }
+
+    pub fn endpoint_url(&self) -> Result<String, String> {
+        Ok(format!(
+            "https://{}.r2.cloudflarestorage.com",
+            &self.account_id,
+        ))
     }
 
     fn _base_url(&self) -> String {
@@ -332,6 +324,17 @@ impl R2D2 {
         Some(headers)
     }
 
+    pub async fn aws_credentials(&self) -> Result<Credentials, CredentialsError> {
+        let (Some(key_id), Some(secret)) = (&self.aws_access_key_id, &self.aws_secret_access_key)
+        else {
+            return Err(CredentialsError::invalid_configuration(
+                "`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are required for `upload`.",
+            ));
+        };
+
+        Ok(Credentials::new(key_id, secret, None, None, "r2-d2"))
+    }
+
     pub fn set_bucket(
         &mut self,
         bucket: Option<String>,
@@ -345,9 +348,7 @@ impl R2D2 {
         &self,
         bucket: Option<String>,
     ) -> Result<ApiResponse<UsageResultData>, String> {
-        let Some(bucket) = bucket.as_ref().or(self.bucket.as_ref()) else {
-            return Err("Can't use `usage()` without a bucket!".to_string());
-        };
+        let bucket = self.bucket(bucket)?;
 
         let Some(request) = self.request(&format!("buckets/{bucket}/usage?=null")) else {
             return Err(format!("Request for '{}' could not be set up.", "usage"));
@@ -396,5 +397,14 @@ impl R2D2 {
             .to_python_error("list")?;
 
         Ok(data.buckets)
+    }
+}
+
+impl ProvideCredentials for R2D2 {
+    fn provide_credentials<'a>(&'a self) -> provider::future::ProvideCredentials<'a>
+    where
+        Self: 'a,
+    {
+        provider::future::ProvideCredentials::new(self.aws_credentials())
     }
 }
