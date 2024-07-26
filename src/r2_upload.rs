@@ -1,17 +1,165 @@
+use std::io;
+use std::io::Write;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
-use aws_config::Region;
-use aws_config::SdkConfig;
-use aws_sdk_s3::config::SharedCredentialsProvider;
+use crate::helpers::ResultToString;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client as S3Client;
 use aws_smithy_types::byte_stream::{ByteStream, Length};
+use futures::future::try_join_all;
+use tokio::sync::Mutex;
 
 use crate::r2::R2D2;
 
-// In bytes, minimum chunk size of 50 MB. Increase CHUNK_SIZE to send larger chunks.
-const CHUNK_SIZE: u64 = 1024 * 1024 * 10;
+// In bytes; minimum chunk size is 5 MB; increase CHUNK_SIZE to send larger chunks:
+const CHUNK_SIZE: u64 = 1024 * 1024 * 15;
 const MAX_CHUNKS: u64 = 10000;
+
+struct MultipartUpload<'a> {
+    client: &'a S3Client,
+    path: &'a Path,
+    upload_id: &'a str,
+    key: &'a str,
+    bucket: &'a str,
+}
+
+impl<'a> MultipartUpload<'a> {
+    pub const fn new(
+        client: &'a S3Client,
+        path: &'a Path,
+        upload_id: &'a str,
+        key: &'a str,
+        bucket: &'a str,
+    ) -> Self {
+        Self {
+            client,
+            path,
+            upload_id,
+            key,
+            bucket,
+        }
+    }
+}
+
+async fn upload_chunk(
+    to_upload: &MultipartUpload<'_>,
+    part_number: i32,
+    chunk_index: u64,
+    chunk_size: u64,
+    progress: Arc<Mutex<ProgressState>>,
+) -> Result<CompletedPart, String> {
+    let stream = ByteStream::read_from()
+        .path(to_upload.path)
+        .offset(chunk_index * CHUNK_SIZE)
+        // .length(Length::Exact(this_chunk))
+        .length(Length::UpTo(chunk_size))
+        .build()
+        .await
+        .map_err_to_string()?;
+
+    let upload_part_res = to_upload
+        .client
+        .upload_part()
+        .key(to_upload.key)
+        .bucket(to_upload.bucket)
+        .upload_id(to_upload.upload_id)
+        .body(stream)
+        .part_number(part_number)
+        .send()
+        .await
+        .map_err(|_err| format!("Something went wrong uploading part {part_number}."))?;
+
+    // get mutex lock and update value:
+    progress.lock().await.update(chunk_size);
+
+    let e_tag = upload_part_res.e_tag.unwrap_or_default();
+
+    Ok(CompletedPart::builder()
+        .e_tag(e_tag)
+        .part_number(part_number)
+        .build())
+}
+
+#[derive(Debug)]
+struct ProgressState {
+    total_uploaded: f64,
+    expected_size: f64,
+}
+
+#[allow(clippy::cast_precision_loss)]
+impl ProgressState {
+    const fn new(expected_size: u64) -> Self {
+        Self {
+            total_uploaded: 0f64,
+            expected_size: expected_size as f64,
+        }
+    }
+
+    fn update(
+        &mut self,
+        uploaded: u64,
+    ) {
+        self.total_uploaded += uploaded as f64;
+    }
+
+    #[allow(dead_code)]
+    fn percentage(&self) -> String {
+        let raw = self.total_uploaded / self.expected_size;
+
+        format!("{:.2}%", raw * 100.0)
+    }
+
+    fn bar(&self) -> String {
+        let raw = self.total_uploaded / self.expected_size;
+        let percent = raw * 100.0;
+
+        // Define the number of characters for the bar, e.g., 20 characters
+        let bar_length: i32 = 20;
+
+        // Calculate the number of '#' characters to display based on the percentage
+        let filled_length = (f64::from(bar_length) * raw).round() as i32;
+
+        // Create the progress bar string
+        let mut bar = String::new();
+        for _ in 0..filled_length {
+            bar.push('#');
+        }
+        for _ in filled_length..bar_length {
+            bar.push(' ');
+        }
+
+        // Format the output with percentage and progress bar
+        format!(
+            "[{}]{} {:.2}%",
+            bar,
+            if percent >= 100.0 {
+                "##"
+            } else if percent >= 95.0 {
+                "# "
+            } else {
+                "  "
+            },
+            percent
+        )
+    }
+}
+
+async fn display_upload_feedback(progress: Arc<Mutex<ProgressState>>) {
+    let spinner_chars = ['|', '/', '-', '\\'];
+    let mut idx = 0;
+    loop {
+        eprint!(
+            "\rUploading {} {}",
+            spinner_chars[idx],
+            progress.lock().await.bar()
+        );
+        idx = (idx + 1) % spinner_chars.len();
+        io::stdout().flush().unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
 
 pub async fn upload_example(
     r2: R2D2,
@@ -25,25 +173,13 @@ pub async fn upload_example(
         .to_str()
         .unwrap_or_default();
     let Ok(metadata) = tokio::fs::metadata(path).await else {
-        return Err(format!("`{}` does not seem to exist.", file_path));
+        return Err(format!("`{file_path}` does not seem to exist."));
     };
 
     let file_size = metadata.len();
 
-    let bucket = r2.bucket(bucket)?;
-
-    // let url = r2.endpoint_url(Some(bucket.clone()))?;
-    let url = r2.endpoint_url()?;
-    let region = Region::from_static("auto");
-    let provider = SharedCredentialsProvider::new(r2);
-
-    let shared_config = SdkConfig::builder()
-        .region(Some(region))
-        .endpoint_url(url)
-        .credentials_provider(provider)
-        .build();
-
-    let client = S3Client::new(&shared_config);
+    let bucket = r2.bucket(&bucket)?;
+    let client = r2.into_s3()?;
 
     let multipart_upload_res = client
         .create_multipart_upload()
@@ -51,9 +187,7 @@ pub async fn upload_example(
         .key(key)
         .send()
         .await
-        .map_err(|err| {
-            // dbg!(err.raw_response().unwrap().body());
-
+        .map_err(|_| {
             format!("Something went wrong trying to upload to {}. Are you sure you have the right credentials and bucket name?", &bucket)
         })?;
 
@@ -75,52 +209,14 @@ pub async fn upload_example(
         return Err("Too many chunks! Try increasing your chunk size.".to_string());
     }
 
-    let mut upload_parts: Vec<CompletedPart> = Vec::new();
+    let to_upload = MultipartUpload::new(&client, path, upload_id, key, &bucket);
 
-    // for chunk_index in 0..chunk_count {
-    //     let part_number = (chunk_index as i32) + 1;
-    //     eprintln!("{}/{}", part_number, chunk_count);
-    //
-    //     let this_chunk = if chunk_count - 1 == chunk_index {
-    //         size_of_last_chunk
-    //     } else {
-    //         CHUNK_SIZE
-    //     };
-    //     let stream = ByteStream::read_from()
-    //         .path(path)
-    //         .offset(chunk_index * CHUNK_SIZE)
-    //         .length(Length::Exact(this_chunk))
-    //         .build()
-    //         .await
-    //         .map_err_to_string()?;
-    //
-    //     // Chunk index needs to start at 0, but part numbers start at 1.
-    //     let upload_part_res = client
-    //         .upload_part()
-    //         .key(key)
-    //         .bucket(&bucket)
-    //         .upload_id(upload_id)
-    //         .body(stream)
-    //         .part_number(part_number)
-    //         .send()
-    //         .await
-    //         .map_err(|err| {
-    //             dbg!(&err);
-    //             format!("Something went wrong uploading part {}/{}.", part_number, chunk_count)
-    //         })?;
-    //
-    //     upload_parts.push(
-    //         CompletedPart::builder()
-    //             .e_tag(upload_part_res.e_tag.unwrap_or_default())
-    //             .part_number(part_number)
-    //             .build(),
-    //     );
-    // }
+    let mut promises = vec![];
+    let progress = Arc::new(Mutex::new(ProgressState::new(file_size)));
 
     for chunk_index in 0..chunk_count {
-        // todo: in parallel?
+        // Chunk index needs to start at 0, but part numbers start at 1.
         let part_number = (chunk_index as i32) + 1;
-        eprintln!("{}/{}", part_number, chunk_count);
 
         let this_chunk = if chunk_count - 1 == chunk_index {
             size_of_last_chunk
@@ -128,35 +224,24 @@ pub async fn upload_example(
             CHUNK_SIZE
         };
 
-        let stream = ByteStream::read_from()
-            .path(path)
-            .offset(chunk_index * CHUNK_SIZE)
-            // .length(Length::UpTo(CHUNK_SIZE))
-            .length(Length::Exact(this_chunk))
-            .build()
-            .await
-            .unwrap();
-
-        let upload_part_res = client
-            .upload_part()
-            .key(key)
-            .bucket(&bucket)
-            .upload_id(upload_id)
-            .body(stream)
-            .part_number(part_number)
-            .send()
-            .await
-            .unwrap();
-
-        let e_tag = upload_part_res.e_tag.unwrap_or_default();
-
-        upload_parts.push(
-            CompletedPart::builder()
-                .e_tag(e_tag)
-                .part_number(part_number)
-                .build(),
+        let promise = upload_chunk(
+            &to_upload,
+            part_number,
+            chunk_index,
+            this_chunk, // -> chunk size
+            Arc::clone(&progress),
         );
+
+        promises.push(promise);
     }
+
+    let upload_feedback = tokio::task::spawn(display_upload_feedback(Arc::clone(&progress)));
+
+    // Use try_join to run all promises in parallel and handle failures
+    let upload_parts = try_join_all(promises).await?;
+
+    upload_feedback.abort(); // Abort the spinner loop as download completes
+    eprint!("\r\x1B[2K"); // clear the line
 
     let completed_multipart_upload: CompletedMultipartUpload = CompletedMultipartUpload::builder()
         .set_parts(Some(upload_parts))
@@ -170,13 +255,9 @@ pub async fn upload_example(
         .upload_id(upload_id)
         .send()
         .await
-        .map_err(|err| {
-            dbg!(&err);
-            dbg!(err.raw_response());
-            "Something went wrong completing the upload.".to_string()
-        })?;
+        .map_err(|_| "Something went wrong completing the upload.".to_string())?;
 
-    dbg!(_complete_multipart_upload_res);
+    eprintln!("ok?");
 
     Ok(())
 }

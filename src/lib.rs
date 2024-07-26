@@ -23,9 +23,9 @@ async fn async_main_rs() -> Result<i32, String> {
     // print_table(&rows);
 
     // subcommand 'upload':
-    // upload_example(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await?;
-    upload_example(r2, "/home/robin/Downloads/sport.zip".to_string(), None).await?;
-    // upload_example(r2, "/home/robin/Downloads/article.image.860b6373d9dac5f1.aW1hZ2UwMDAxMS5qcGVn.jpeg".to_string(), None).await?;
+    upload_example(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await?;
+    // upload_example(r2, "/home/robin/Downloads/sport.zip".to_string(), None).await?;
+    // upload_example(r2, "/home/robin/Downloads/praesides.png".to_string(), None).await?;
 
     Ok(0)
 }

@@ -97,6 +97,7 @@ impl UsageTable {
         }
     }
 
+    #[must_use]
     pub fn bold(mut self) -> Self {
         self.bucket_name = self.bucket_name.bold().to_string();
         self.human_size = self.human_size.bold().to_string();

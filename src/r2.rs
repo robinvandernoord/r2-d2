@@ -1,8 +1,12 @@
 use crate::commands::list::ListOptions;
 use crate::helpers::{IntoPythonError, ResultToString};
+use aws_config::{Region, SdkConfig};
 use aws_credential_types::provider::error::CredentialsError;
+use aws_credential_types::provider::SharedCredentialsProvider;
 use aws_credential_types::{provider, Credentials};
 use aws_sdk_s3::config::ProvideCredentials;
+use aws_sdk_s3::Client as S3Client;
+use aws_smithy_runtime_api::client::stalled_stream_protection::StalledStreamProtectionConfig;
 use dotenvy::from_path_iter;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::PyResult;
@@ -277,13 +281,33 @@ impl R2D2 {
 
     pub fn bucket(
         &self,
-        bucket: Option<String>,
+        bucket: &Option<String>,
     ) -> Result<String, String> {
         let Some(bucket) = bucket.as_ref().or(self.bucket.as_ref()) else {
             return Err("Bucket (`R2_BUCKET`) required for this operation.".to_string());
         };
 
         Ok(bucket.to_string())
+    }
+
+    pub fn into_s3(self) -> Result<S3Client, String> {
+        let url = self.endpoint_url()?;
+        let region = Region::from_static("auto");
+        let provider = SharedCredentialsProvider::new(self);
+
+        let shared_config = SdkConfig::builder()
+            .region(Some(region))
+            .endpoint_url(url)
+            .credentials_provider(provider)
+            .stalled_stream_protection(
+                // allow low throughput (otherwise you get DispatchFailure/ThroughputBelowMinimum)
+                StalledStreamProtectionConfig::enabled()
+                    .upload_enabled(false)
+                    .build(),
+            )
+            .build();
+
+        Ok(S3Client::new(&shared_config))
     }
 
     pub fn endpoint_url(&self) -> Result<String, String> {
@@ -324,6 +348,7 @@ impl R2D2 {
         Some(headers)
     }
 
+    #[allow(clippy::unused_async)]
     pub async fn aws_credentials(&self) -> Result<Credentials, CredentialsError> {
         let (Some(key_id), Some(secret)) = (&self.aws_access_key_id, &self.aws_secret_access_key)
         else {
@@ -348,7 +373,7 @@ impl R2D2 {
         &self,
         bucket: Option<String>,
     ) -> Result<ApiResponse<UsageResultData>, String> {
-        let bucket = self.bucket(bucket)?;
+        let bucket = self.bucket(&bucket)?;
 
         let Some(request) = self.request(&format!("buckets/{bucket}/usage?=null")) else {
             return Err(format!("Request for '{}' could not be set up.", "usage"));
