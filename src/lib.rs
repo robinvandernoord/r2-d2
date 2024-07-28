@@ -4,7 +4,7 @@ use pyo3::{prelude as pyo, PyAny, PyResult, Python};
 
 use crate::commands::usage::usage;
 use crate::commands::usage::R2Usage;
-use crate::helpers::future_pyresult_to_py;
+use crate::helpers::{future_pyresult_to_py, UnwrapIntoPythonError};
 use crate::r2::R2D2;
 use crate::r2_upload::upload_example;
 
@@ -13,8 +13,7 @@ pub mod helpers;
 pub mod r2;
 mod r2_upload;
 
-#[allow(clippy::unused_async)]
-async fn async_main_rs() -> Result<i32, String> {
+async fn async_main_rs() -> anyhow::Result<i32> {
     let r2 = R2D2::guess()?;
 
     // todo: clap
@@ -23,9 +22,8 @@ async fn async_main_rs() -> Result<i32, String> {
     // print_table(&rows);
 
     // subcommand 'upload':
-    upload_example(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await?;
-    // upload_example(r2, "/home/robin/Downloads/sport.zip".to_string(), None).await?;
-    // upload_example(r2, "/home/robin/Downloads/praesides.png".to_string(), None).await?;
+    // upload_example(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await.unwrap_or_raise()?;
+    upload_example(r2, "/home/robin/Downloads/praesides.png".to_string(), None).await?;
 
     Ok(0)
 }
@@ -45,12 +43,8 @@ pub fn error(py: Python<'_>) -> PyResult<&PyAny> {
 #[pyo::pyfunction]
 pub fn main_rs(py: Python<'_>) -> PyResult<&PyAny> {
     pyo3_asyncio::tokio::future_into_py(py, async {
-        let exit_code = async_main_rs().await.unwrap_or_else(|msg| {
-            eprintln!("{msg}");
-            1
-        });
-
-        Ok(Python::with_gil(|_| exit_code))
+        // result is Ok(exit code) or Err(python error)
+        async_main_rs().await.unwrap_or_raise()
     })
 }
 

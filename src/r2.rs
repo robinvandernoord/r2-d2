@@ -1,5 +1,6 @@
 use crate::commands::list::ListOptions;
-use crate::helpers::{IntoPythonError, ResultToString};
+use crate::helpers::IntoPythonError;
+use anyhow::{anyhow, bail, Context};
 use aws_config::{Region, SdkConfig};
 use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::SharedCredentialsProvider;
@@ -25,15 +26,15 @@ const CLOUDFLARE_API: &str = "https://api.cloudflare.com/client/v4";
 fn get_from_config(
     config: &BTreeMap<String, String>,
     key: &str,
-) -> Result<String, String> {
+) -> anyhow::Result<String> {
     config.get(key).map_or_else(
-        || Err(format!("Key {key} could not be found in the config.")),
+        || Err(anyhow!("Key {key} could not be found in the config.")),
         |value| Ok(value.clone()),
     )
 }
 
-pub fn get_from_env(key: &str) -> Result<String, String> {
-    env::var(key).map_err(|_| format!("Key {key} could not be found in your environment."))
+pub fn get_from_env(key: &str) -> anyhow::Result<String> {
+    env::var(key).map_err(|_| anyhow!("Key {key} could not be found in your environment."))
 }
 
 fn read_configfile(path: &Path) -> Option<BTreeMap<String, String>> {
@@ -143,33 +144,33 @@ pub struct BucketListData {
 }
 
 trait SendAndHandle {
-    async fn send_and_handle(self) -> Result<String, String>;
+    async fn send_and_handle(self) -> anyhow::Result<String>;
     async fn send_and_parse<T: serde::de::DeserializeOwned>(self)
-        -> Result<ApiResponse<T>, String>;
+        -> anyhow::Result<ApiResponse<T>>;
 }
 
 impl SendAndHandle for RequestBuilder {
-    async fn send_and_handle(self) -> Result<String, String> {
+    async fn send_and_handle(self) -> anyhow::Result<String> {
         let resp = self.send().await;
 
         match resp {
             Ok(resp) => resp
                 .text()
                 .await
-                .map_err(|e| format!("Error reading response text: {e}")),
-            Err(e) => Err(format!("Request error: {e}")),
+                .with_context(|| "Error reading response text"),
+            Err(e) => Err(e).with_context(|| "Request error"),
         }
     }
 
     async fn send_and_parse<T: serde::de::DeserializeOwned>(
         self
-    ) -> Result<ApiResponse<T>, String> {
+    ) -> anyhow::Result<ApiResponse<T>> {
         let text = self.send_and_handle().await?;
         let buffer = BufReader::new(text.as_bytes());
         // normally, `serde_json::from_string` expects &str but that requires a lifetime
         // and `text` doesn't live that long.
         // So using `serde owned` with a buffer works better in this scenario.
-        let result: ApiResponse<T> = serde_json::de::from_reader(buffer).map_err_to_string()?;
+        let result: ApiResponse<T> = serde_json::de::from_reader(buffer)?;
 
         Ok(result)
     }
@@ -231,7 +232,7 @@ pub struct R2D2 {
 impl R2D2 {
     // low-level: config, setup stuff:
 
-    pub fn from_path(path: &Path) -> Result<Self, String> {
+    pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         if let Some(config) = read_configfile(path) {
             Ok(Self {
                 account_id: get_from_config(&config, "R2_ACCOUNT_ID")?,
@@ -241,25 +242,25 @@ impl R2D2 {
                 aws_secret_access_key: get_from_config(&config, "R2_SECRET_ACCESS_KEY").ok(),
             })
         } else {
-            Err(format!("Invalid config file {}", ".r2"))
+            bail!("Invalid config file {}", ".r2")
         }
     }
 
-    pub fn from_filename(filename: &str) -> Result<Self, String> {
+    pub fn from_filename(filename: &str) -> anyhow::Result<Self> {
         let path = Path::new(filename);
         Self::from_path(path)
     }
 
     /// Read .r2 config file
-    pub fn from_dot_r2() -> Result<Self, String> {
+    pub fn from_dot_r2() -> anyhow::Result<Self> {
         Self::from_filename(".r2")
     }
 
-    pub fn from_dotenv() -> Result<Self, String> {
+    pub fn from_dotenv() -> anyhow::Result<Self> {
         Self::from_filename(".env")
     }
 
-    pub fn from_env() -> Result<Self, String> {
+    pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             account_id: get_from_env("R2_ACCOUNT_ID")?,
             apikey: get_from_env("R2_API_KEY")?,
@@ -269,29 +270,27 @@ impl R2D2 {
         })
     }
 
-    pub fn guess() -> Result<Self, String> {
+    pub fn guess() -> anyhow::Result<Self> {
         // .r2, then .env, then environment variables
         Self::from_dot_r2()
             .or_else(|_| Self::from_dotenv())
             .or_else(|_| Self::from_env())
-            .map_err(|e| {
-                format!("No config could be found (tried .r2, .env, environment variables) - {e}")
-            })
+            .with_context(|| "No config could be found (tried .r2, .env, environment variables)")
     }
 
     pub fn bucket(
         &self,
         bucket: &Option<String>,
-    ) -> Result<String, String> {
+    ) -> anyhow::Result<String> {
         let Some(bucket) = bucket.as_ref().or(self.bucket.as_ref()) else {
-            return Err("Bucket (`R2_BUCKET`) required for this operation.".to_string());
+            bail!("Bucket (`R2_BUCKET`) required for this operation.");
         };
 
         Ok(bucket.to_string())
     }
 
-    pub fn into_s3(self) -> Result<S3Client, String> {
-        let url = self.endpoint_url()?;
+    pub fn into_s3(self) -> anyhow::Result<S3Client> {
+        let url = self.endpoint_url();
         let region = Region::from_static("auto");
         let provider = SharedCredentialsProvider::new(self);
 
@@ -310,11 +309,8 @@ impl R2D2 {
         Ok(S3Client::new(&shared_config))
     }
 
-    pub fn endpoint_url(&self) -> Result<String, String> {
-        Ok(format!(
-            "https://{}.r2.cloudflarestorage.com",
-            &self.account_id,
-        ))
+    pub fn endpoint_url(&self) -> String {
+        format!("https://{}.r2.cloudflarestorage.com", &self.account_id,)
     }
 
     fn _base_url(&self) -> String {
@@ -372,11 +368,11 @@ impl R2D2 {
     pub async fn _usage(
         &self,
         bucket: Option<String>,
-    ) -> Result<ApiResponse<UsageResultData>, String> {
+    ) -> anyhow::Result<ApiResponse<UsageResultData>> {
         let bucket = self.bucket(&bucket)?;
 
         let Some(request) = self.request(&format!("buckets/{bucket}/usage?=null")) else {
-            return Err(format!("Request for '{}' could not be set up.", "usage"));
+            bail!("Request for '{}' could not be set up.", "usage");
         };
 
         request.send_and_parse().await
@@ -396,10 +392,10 @@ impl R2D2 {
     pub async fn _list(
         &self,
         options: Option<ListOptions>,
-    ) -> Result<ApiResponse<BucketResultData>, String> {
+    ) -> anyhow::Result<ApiResponse<BucketResultData>> {
         // todo: cursor (for pagination), direction, name_contains, order, per_page, start_after
         let Some(request) = self.request("buckets") else {
-            return Err(format!("Request for '{}' could not be set up.", "usage"));
+            bail!("Request for '{}' could not be set up.", "usage");
         };
 
         let options = options.unwrap_or_default();

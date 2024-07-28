@@ -13,7 +13,20 @@ async def main_py_async():
     """
     Async entrypoint ('main_rs' can't be used with asyncio.run directly)
     """
-    exit(await main_rs())  # returns exit code
+    try:
+        print('pre')
+        exit_code = await main_rs()
+        print('success')
+    except RuntimeError as e:
+        print(":3")
+        raise ValueError("Something went wrong in Rust land") from e
+        exit_code = 1
+    except BaseException as e:
+        print(f"Unexpected error {type(e)}", e)
+    finally:
+        print('post')
+
+    exit(exit_code)
 
 
 # ---
@@ -38,7 +51,6 @@ def main():
     # error_sync()
 
     main_py_sync()
-
 
 if __name__ == "__main__":
     main()

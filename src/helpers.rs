@@ -123,8 +123,27 @@ impl<T> IntoPythonError<T> for Result<T, String> {
     }
 }
 
+impl<T> IntoPythonError<T> for anyhow::Result<T> {
+    fn to_python_error(
+        self,
+        _: &str,
+    ) -> PyResult<T> {
+        self.map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+}
+
 impl<T> UnwrapIntoPythonError<T> for Result<T, String> {
     fn unwrap_or_raise(self) -> PyResult<T> {
         self.map_err(PyRuntimeError::new_err)
+    }
+}
+
+pub fn fmt_error(e: &anyhow::Error) -> String {
+    format!("{e:?}")
+}
+
+impl<T> UnwrapIntoPythonError<T> for anyhow::Result<T> {
+    fn unwrap_or_raise(self) -> PyResult<T> {
+        self.map_err(|e| PyRuntimeError::new_err(fmt_error(&e)))
     }
 }

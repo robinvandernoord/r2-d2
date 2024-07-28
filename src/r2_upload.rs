@@ -1,10 +1,10 @@
+use anyhow::{bail, Context};
 use std::io;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::helpers::ResultToString;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client as S3Client;
 use aws_smithy_types::byte_stream::{ByteStream, Length};
@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use crate::r2::R2D2;
 
 // In bytes; minimum chunk size is 5 MB; increase CHUNK_SIZE to send larger chunks:
-const CHUNK_SIZE: u64 = 1024 * 1024 * 15;
+const CHUNK_SIZE: u64 = 1024 * 1024; // fixme: * 15
 const MAX_CHUNKS: u64 = 10000;
 
 struct MultipartUpload<'a> {
@@ -49,15 +49,14 @@ async fn upload_chunk(
     chunk_index: u64,
     chunk_size: u64,
     progress: Arc<Mutex<ProgressState>>,
-) -> Result<CompletedPart, String> {
+) -> anyhow::Result<CompletedPart> {
     let stream = ByteStream::read_from()
         .path(to_upload.path)
         .offset(chunk_index * CHUNK_SIZE)
         // .length(Length::Exact(this_chunk))
         .length(Length::UpTo(chunk_size))
         .build()
-        .await
-        .map_err_to_string()?;
+        .await?;
 
     let upload_part_res = to_upload
         .client
@@ -69,7 +68,7 @@ async fn upload_chunk(
         .part_number(part_number)
         .send()
         .await
-        .map_err(|_err| format!("Something went wrong uploading part {part_number}."))?;
+        .with_context(|| format!("Something went wrong uploading part {part_number}."))?;
 
     // get mutex lock and update value:
     progress.lock().await.update(chunk_size);
@@ -165,7 +164,7 @@ pub async fn upload_example(
     r2: R2D2,
     file_path: String,
     bucket: Option<String>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let path = Path::new(&file_path);
     let key = path
         .file_name()
@@ -173,7 +172,7 @@ pub async fn upload_example(
         .to_str()
         .unwrap_or_default();
     let Ok(metadata) = tokio::fs::metadata(path).await else {
-        return Err(format!("`{file_path}` does not seem to exist."));
+        bail!("`{file_path}` does not seem to exist.");
     };
 
     let file_size = metadata.len();
@@ -187,12 +186,12 @@ pub async fn upload_example(
         .key(key)
         .send()
         .await
-        .map_err(|_| {
+        .with_context(|| {
             format!("Something went wrong trying to upload to {}. Are you sure you have the right credentials and bucket name?", &bucket)
         })?;
 
     let Some(upload_id) = multipart_upload_res.upload_id() else {
-        return Err("No upload ID, can't continue".to_string());
+        bail!("No upload ID, can't continue");
     };
 
     let mut chunk_count = (file_size / CHUNK_SIZE) + 1;
@@ -203,10 +202,10 @@ pub async fn upload_example(
     }
 
     if file_size == 0 {
-        return Err("Bad file size (0).".to_string());
+        bail!("Bad file size (0).");
     }
     if chunk_count > MAX_CHUNKS {
-        return Err("Too many chunks! Try increasing your chunk size.".to_string());
+        bail!("Too many chunks! Try increasing your chunk size.");
     }
 
     let to_upload = MultipartUpload::new(&client, path, upload_id, key, &bucket);
@@ -255,7 +254,7 @@ pub async fn upload_example(
         .upload_id(upload_id)
         .send()
         .await
-        .map_err(|_| "Something went wrong completing the upload.".to_string())?;
+        .with_context(|| "Something went wrong completing the upload.")?;
 
     eprintln!("ok?");
 
