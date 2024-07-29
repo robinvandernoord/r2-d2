@@ -2,11 +2,11 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::PyModule;
 use pyo3::{prelude as pyo, PyAny, PyResult, Python};
 
-use crate::commands::usage::usage;
 use crate::commands::usage::R2Usage;
-use crate::helpers::{future_pyresult_to_py, UnwrapIntoPythonError};
+use crate::commands::usage::{gather_usage_info, usage};
+use crate::helpers::{future_pyresult_to_py, print_table, UnwrapIntoPythonError};
 use crate::r2::R2D2;
-use crate::r2_upload::upload_example;
+use crate::r2_upload::upload_file;
 
 pub mod commands;
 pub mod helpers;
@@ -18,12 +18,12 @@ async fn async_main_rs() -> anyhow::Result<i32> {
 
     // todo: clap
     // subcommand 'overview':
-    // let rows = gather_usage_info(&r2).await?;
-    // print_table(&rows);
+    let rows = gather_usage_info(&r2).await?;
+    print_table(&rows);
 
     // subcommand 'upload':
-    // upload_example(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await.unwrap_or_raise()?;
-    upload_example(r2, "/home/robin/Downloads/praesides.png".to_string(), None).await?;
+    // upload_file(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await.unwrap_or_raise()?;
+    upload_file(r2, "/home/robin/Downloads/praesides.png".to_string(), None).await?;
 
     Ok(0)
 }

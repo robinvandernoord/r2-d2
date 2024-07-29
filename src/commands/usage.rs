@@ -6,7 +6,7 @@ use pyo3::{prelude as pyo, pyclass, pymethods, PyAny, PyResult, Python};
 use std::collections::BTreeMap;
 use tabled::Tabled;
 
-use crate::helpers::{future_pyresult_to_py, sotoi, ResultToString, UnwrapIntoPythonError};
+use crate::helpers::{future_pyresult_to_py, sotoi, UnwrapIntoPythonError};
 use crate::r2::{UsageResultData, R2D2};
 
 #[pyclass(module = "r2_d2")]
@@ -109,15 +109,12 @@ fn calculate_sum(rows: &[UsageTable]) -> i64 {
     rows.iter().fold(0, |sum, row| sum + row.raw_size)
 }
 
-pub async fn gather_usage_info(r2: &R2D2) -> Result<Vec<UsageTable>, String> {
+pub async fn gather_usage_info(r2: &R2D2) -> anyhow::Result<Vec<UsageTable>> {
     // todo: move elsewhere
     // 1. list buckets
     // 2. gather usage data
     // 3. return table (str)
-    let buckets = r2
-        .list(Some(ListOptions::default()))
-        .await
-        .map_err_to_string()?;
+    let buckets = r2.list(Some(ListOptions::default())).await?;
 
     let bucket_names: Vec<String> = buckets.into_iter().map(|bucket| bucket.name).collect();
 

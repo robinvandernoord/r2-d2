@@ -1988,6 +1988,7 @@ dependencies = [
  "pyo3-asyncio",
  "reqwest",
  "rust-s3",
+ "scopeguard",
  "serde",
  "serde_json",
  "tabled",

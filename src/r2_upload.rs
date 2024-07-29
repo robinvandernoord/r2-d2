@@ -1,4 +1,5 @@
 use anyhow::{bail, Context};
+use std::future::Future;
 use std::io;
 use std::io::Write;
 use std::path::Path;
@@ -9,12 +10,13 @@ use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client as S3Client;
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use futures::future::try_join_all;
+use scopeguard::defer;
 use tokio::sync::Mutex;
 
 use crate::r2::R2D2;
 
 // In bytes; minimum chunk size is 5 MB; increase CHUNK_SIZE to send larger chunks:
-const CHUNK_SIZE: u64 = 1024 * 1024; // fixme: * 15
+const CHUNK_SIZE: u64 = 1024 * 1024 * 15;
 const MAX_CHUNKS: u64 = 10000;
 
 struct MultipartUpload<'a> {
@@ -53,7 +55,6 @@ async fn upload_chunk(
     let stream = ByteStream::read_from()
         .path(to_upload.path)
         .offset(chunk_index * CHUNK_SIZE)
-        // .length(Length::Exact(this_chunk))
         .length(Length::UpTo(chunk_size))
         .build()
         .await?;
@@ -160,7 +161,22 @@ async fn display_upload_feedback(progress: Arc<Mutex<ProgressState>>) {
     }
 }
 
-pub async fn upload_example(
+async fn run_upload_tasks<R>(
+    promises: Vec<impl Future<Output = anyhow::Result<R>>>,
+    progress: Arc<Mutex<ProgressState>>,
+) -> anyhow::Result<Vec<R>> {
+    let upload_feedback = tokio::task::spawn(display_upload_feedback(progress));
+
+    defer! {
+        upload_feedback.abort(); // Abort the spinner loop as download completes
+        eprint!("\r\x1B[2K"); // clear the line
+    }
+
+    // Use try_join to run all promises in parallel and handle failures
+    try_join_all(promises).await
+}
+
+pub async fn upload_file(
     r2: R2D2,
     file_path: String,
     bucket: Option<String>,
@@ -234,13 +250,7 @@ pub async fn upload_example(
         promises.push(promise);
     }
 
-    let upload_feedback = tokio::task::spawn(display_upload_feedback(Arc::clone(&progress)));
-
-    // Use try_join to run all promises in parallel and handle failures
-    let upload_parts = try_join_all(promises).await?;
-
-    upload_feedback.abort(); // Abort the spinner loop as download completes
-    eprint!("\r\x1B[2K"); // clear the line
+    let upload_parts = run_upload_tasks(promises, Arc::clone(&progress)).await?;
 
     let completed_multipart_upload: CompletedMultipartUpload = CompletedMultipartUpload::builder()
         .set_parts(Some(upload_parts))

@@ -289,6 +289,7 @@ impl R2D2 {
         Ok(bucket.to_string())
     }
 
+    /// `SharedCredentialsProvider` eats self so it needs to be owned.
     pub fn into_s3(self) -> anyhow::Result<S3Client> {
         let url = self.endpoint_url();
         let region = Region::from_static("auto");
@@ -344,6 +345,7 @@ impl R2D2 {
         Some(headers)
     }
 
+    /// this function is async becuase `provider::future::ProvideCredentials` expects that
     #[allow(clippy::unused_async)]
     pub async fn aws_credentials(&self) -> Result<Credentials, CredentialsError> {
         let (Some(key_id), Some(secret)) = (&self.aws_access_key_id, &self.aws_secret_access_key)
