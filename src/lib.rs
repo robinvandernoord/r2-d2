@@ -1,16 +1,14 @@
 use crate::cli::{Args, Process};
 use crate::commands::usage::R2Usage;
-use crate::commands::usage::{gather_usage_info, usage};
-use crate::helpers::{UnwrapIntoPythonError, fmt_error, future_pyresult_to_py, print_table};
-use crate::r2::R2D2;
-use crate::r2_upload::upload_file;
+use crate::commands::usage::usage;
+use crate::helpers::{UnwrapIntoPythonError, fmt_error, future_pyresult_to_py};
 use clap::{Command, CommandFactory, Parser};
 use clap_complete::{Generator, generate};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::PyModule;
 use pyo3::{PyAny, PyResult, Python, prelude as pyo};
-use std::io;
 use std::process::exit;
+use std::{env, io};
 
 mod cli;
 pub mod commands;
@@ -27,7 +25,9 @@ pub fn print_completions<G: Generator>(
 }
 
 async fn async_main_rs() -> anyhow::Result<i32> {
-    let args = Args::parse();
+    // skip first (`python r2d2 subcommand` -> `r2d2 subcommand`):
+
+    let args = Args::parse_from(env::args().skip(1));
 
     let exit_code = if let Some(generator) = args.generator {
         let mut cmd = Args::command();
@@ -40,9 +40,6 @@ async fn async_main_rs() -> anyhow::Result<i32> {
             1
         })
     };
-
-    // If bundled via an entrypoint, the first argument is 'python' so skip it:
-    // let args = Args::parse_from_python();
 
     exit(exit_code);
 }

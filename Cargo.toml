@@ -44,6 +44,7 @@ aws-credential-types = {version = "1.2"}
 clap = { version = "4.5.32", features = ["derive"] }
 anstyle = "1.0.10"
 clap_complete = "4.5.47"
+resolve-path = "0.1.0"
 
 [lints.clippy]
 # categories:

@@ -54,26 +54,34 @@ pub struct Args {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
+pub struct AuthOptions {}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
 pub struct OverviewOptions {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
 pub struct UploadOptions {}
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Parser)]
-pub enum Commands {
-    Overview(OverviewOptions),
-    Upload(UploadOptions),
-}
+macro_rules! register_cli {
+    ($name:ident { $($variant:ident($opts:ty)),* $(,)? }) => {
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Parser)]
+        pub enum $name {
+            $($variant($opts)),*
+        }
 
-impl Process for Commands {
-    async fn process(self) -> anyhow::Result<i32> {
-        match self {
-            Commands::Overview(opts) => {
-                opts.process().await
-            }
-            Commands::Upload(opts) => {
-                opts.process().await
+        impl Process for $name {
+            async fn process(self) -> anyhow::Result<i32> {
+                match self {
+                    $(Self::$variant(opts) => opts.process().await,)*
+                }
             }
         }
-    }
+    };
 }
+
+// Usage
+register_cli!(Commands {
+    Auth(AuthOptions),
+    Overview(OverviewOptions),
+    Upload(UploadOptions),
+});

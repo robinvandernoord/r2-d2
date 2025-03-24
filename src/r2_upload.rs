@@ -193,8 +193,8 @@ pub async fn upload_file(
 
     let file_size = metadata.len();
 
-    let bucket = r2.bucket(&bucket)?;
-    let client = r2.into_s3()?;
+    let bucket = r2.bucket_or(&bucket)?;
+    let client = r2.clone().into_s3()?;
 
     let multipart_upload_res = client
         .create_multipart_upload()
@@ -256,7 +256,7 @@ pub async fn upload_file(
         .set_parts(Some(upload_parts))
         .build();
 
-    let _complete_multipart_upload_res = client
+    let _completed_multipart_upload_output = client
         .complete_multipart_upload()
         .bucket(&bucket)
         .key(key)
@@ -266,7 +266,16 @@ pub async fn upload_file(
         .await
         .with_context(|| "Something went wrong completing the upload.")?;
 
-    eprintln!("ok?");
+    // bucket domain + key = public url
+    if let Some(domain) = r2.bucket_domain(Some(bucket)).await {
+        let url = domain
+            .join(key)
+            .map(|it| it.to_string())
+            .unwrap_or_default();
+        println!("File uploaded! {url}");
+    } else {
+        println!("File uploaded!");
+    }
 
     Ok(())
 }
