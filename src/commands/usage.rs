@@ -2,12 +2,12 @@ use crate::commands::list::ListOptions;
 use byte_unit::{Byte, UnitType};
 use futures::future;
 use owo_colors::OwoColorize;
-use pyo3::{prelude as pyo, pyclass, pymethods, PyAny, PyResult, Python};
+use pyo3::{PyAny, PyResult, Python, prelude as pyo, pyclass, pymethods};
 use std::collections::BTreeMap;
 use tabled::Tabled;
 
-use crate::helpers::{future_pyresult_to_py, sotoi, UnwrapIntoPythonError};
-use crate::r2::{UsageResultData, R2D2};
+use crate::helpers::{UnwrapIntoPythonError, future_pyresult_to_py, sotoi};
+use crate::r2::{R2D2, UsageResultData};
 
 #[pyclass(module = "r2_d2")]
 #[derive(Debug)]
@@ -62,7 +62,7 @@ impl R2Usage {
 pub async fn usage_async() -> PyResult<R2Usage> {
     let r2d2 = R2D2::guess().unwrap_or_raise()?;
 
-    let usage = r2d2.usage(None).await?;
+    let usage = r2d2.usage_py(None).await?;
     let usage_py: R2Usage = usage.into();
 
     Ok(usage_py)
@@ -114,13 +114,13 @@ pub async fn gather_usage_info(r2: &R2D2) -> anyhow::Result<Vec<UsageTable>> {
     // 1. list buckets
     // 2. gather usage data
     // 3. return table (str)
-    let buckets = r2.list(Some(ListOptions::default())).await?;
+    let buckets = r2.list_py(Some(ListOptions::default())).await?;
 
     let bucket_names: Vec<String> = buckets.into_iter().map(|bucket| bucket.name).collect();
 
     let promises: Vec<_> = bucket_names
         .iter()
-        .map(|bucket_name| r2.usage(Some(bucket_name.clone())))
+        .map(|bucket_name| r2.usage_py(Some(bucket_name.clone())))
         .collect();
 
     let results = future::join_all(promises).await;

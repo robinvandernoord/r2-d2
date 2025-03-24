@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use std::future::Future;
 use std::io;
 use std::io::Write;
@@ -6,8 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use aws_smithy_types::byte_stream::{ByteStream, Length};
 use futures::future::try_join_all;
 use scopeguard::defer;

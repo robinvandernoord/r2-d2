@@ -1,10 +1,10 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::PyModule;
-use pyo3::{prelude as pyo, PyAny, PyResult, Python};
+use pyo3::{PyAny, PyResult, Python, prelude as pyo};
 
 use crate::commands::usage::R2Usage;
 use crate::commands::usage::{gather_usage_info, usage};
-use crate::helpers::{future_pyresult_to_py, print_table, UnwrapIntoPythonError};
+use crate::helpers::{UnwrapIntoPythonError, future_pyresult_to_py, print_table};
 use crate::r2::R2D2;
 use crate::r2_upload::upload_file;
 

@@ -1,16 +1,16 @@
 use crate::commands::list::ListOptions;
 use crate::helpers::IntoPythonError;
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use aws_config::{Region, SdkConfig};
-use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::SharedCredentialsProvider;
-use aws_credential_types::{provider, Credentials};
-use aws_sdk_s3::config::ProvideCredentials;
+use aws_credential_types::provider::error::CredentialsError;
+use aws_credential_types::{Credentials, provider};
 use aws_sdk_s3::Client as S3Client;
+use aws_sdk_s3::config::ProvideCredentials;
 use aws_smithy_runtime_api::client::stalled_stream_protection::StalledStreamProtectionConfig;
 use dotenvy::from_path_iter;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::PyResult;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
@@ -74,12 +74,17 @@ impl<T> IntoPythonError<T> for ApiResponse<T> {
             );
         }
 
-        Err(
-            self.errors.as_ref().map_or_else(|| PyValueError::new_err(format!(
-                "Something went wrong for {hint}, but no specific information was provided."
-            )), |errors| {
+        Err(self.errors.as_ref().map_or_else(
+            || {
+                PyValueError::new_err(format!(
+                    "Something went wrong for {hint}, but no specific information was provided."
+                ))
+            },
+            |errors| {
                 if errors.is_empty() {
-                    PyValueError::new_err(format!("Something went wrong for {hint}, but no specific information was provided."))
+                    PyValueError::new_err(format!(
+                        "Something went wrong for {hint}, but no specific information was provided."
+                    ))
                 } else {
                     let mut msg = format!("[{hint}] ");
 
@@ -90,8 +95,8 @@ impl<T> IntoPythonError<T> for ApiResponse<T> {
 
                     PyValueError::new_err(msg)
                 }
-            })
-        )
+            },
+        ))
     }
 }
 
@@ -146,7 +151,7 @@ pub struct BucketListData {
 trait SendAndHandle {
     async fn send_and_handle(self) -> anyhow::Result<String>;
     async fn send_and_parse<T: serde::de::DeserializeOwned>(self)
-        -> anyhow::Result<ApiResponse<T>>;
+    -> anyhow::Result<ApiResponse<T>>;
 }
 
 impl SendAndHandle for RequestBuilder {
@@ -314,7 +319,7 @@ impl R2D2 {
         format!("https://{}.r2.cloudflarestorage.com", &self.account_id,)
     }
 
-    fn _base_url(&self) -> String {
+    fn base_url(&self) -> String {
         format!("{}/accounts/{}/r2/", CLOUDFLARE_API, self.account_id,)
     }
 
@@ -322,7 +327,7 @@ impl R2D2 {
         &self,
         endpoint: &str,
     ) -> Option<Url> {
-        let base = Url::parse(&self._base_url()).ok()?;
+        let base = Url::parse(&self.base_url()).ok()?;
         base.join(endpoint).ok()
     }
 
@@ -367,7 +372,7 @@ impl R2D2 {
 
     // medium level (api endpoints):
 
-    pub async fn _usage(
+    pub async fn usage(
         &self,
         bucket: Option<String>,
     ) -> anyhow::Result<ApiResponse<UsageResultData>> {
@@ -381,17 +386,17 @@ impl R2D2 {
     }
 
     /// Show usage for current bucket
-    pub async fn usage(
+    pub async fn usage_py(
         &self,
         bucket: Option<String>,
     ) -> PyResult<UsageResultData> {
-        self._usage(bucket)
+        self.usage(bucket)
             .await
             .to_python_error("usage")?
             .to_python_error("usage")
     }
 
-    pub async fn _list(
+    pub async fn list(
         &self,
         options: Option<ListOptions>,
     ) -> anyhow::Result<ApiResponse<BucketResultData>> {
@@ -408,13 +413,13 @@ impl R2D2 {
     }
 
     /// List buckets
-    pub async fn list(
+    pub async fn list_py(
         &self,
         options: Option<ListOptions>,
     ) -> PyResult<Vec<BucketListData>> {
         // todo: cursor (for pagination), direction, name_contains, order, per_page, start_after
         let data = self
-            ._list(options)
+            .list(options)
             .await
             .to_python_error("list")?
             .to_python_error("list")?;

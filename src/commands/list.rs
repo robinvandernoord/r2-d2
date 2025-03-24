@@ -1,4 +1,4 @@
-use crate::r2::{to_query_part, Direction, QueryString};
+use crate::r2::{Direction, QueryString, to_query_part};
 
 #[derive(Debug, Default)]
 pub struct ListOptions {
