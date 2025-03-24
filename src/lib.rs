@@ -1,31 +1,50 @@
+use crate::cli::{Args, Process};
+use crate::commands::usage::R2Usage;
+use crate::commands::usage::{gather_usage_info, usage};
+use crate::helpers::{UnwrapIntoPythonError, fmt_error, future_pyresult_to_py, print_table};
+use crate::r2::R2D2;
+use crate::r2_upload::upload_file;
+use clap::{Command, CommandFactory, Parser};
+use clap_complete::{Generator, generate};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::PyModule;
 use pyo3::{PyAny, PyResult, Python, prelude as pyo};
+use std::io;
+use std::process::exit;
 
-use crate::commands::usage::R2Usage;
-use crate::commands::usage::{gather_usage_info, usage};
-use crate::helpers::{UnwrapIntoPythonError, future_pyresult_to_py, print_table};
-use crate::r2::R2D2;
-use crate::r2_upload::upload_file;
-
+mod cli;
 pub mod commands;
 pub mod helpers;
 pub mod r2;
 mod r2_upload;
 
+pub fn print_completions<G: Generator>(
+    generator: G,
+    cmd: &mut Command,
+) {
+    // get_name returns a str, to_owned = to_string (but restriction::str_to_string)
+    generate(generator, cmd, cmd.get_name().to_owned(), &mut io::stdout());
+}
+
 async fn async_main_rs() -> anyhow::Result<i32> {
-    let r2 = R2D2::guess()?;
+    let args = Args::parse();
 
-    // todo: clap
-    // subcommand 'overview':
-    let rows = gather_usage_info(&r2).await?;
-    print_table(&rows);
+    let exit_code = if let Some(generator) = args.generator {
+        let mut cmd = Args::command();
 
-    // subcommand 'upload':
-    // upload_file(r2, "/home/robin/Downloads/sport.vst".to_string(), None).await.unwrap_or_raise()?;
-    upload_file(r2, "/home/robin/Downloads/praesides.png".to_string(), None).await?;
+        print_completions(generator, &mut cmd);
+        0
+    } else {
+        args.cmd.process().await.unwrap_or_else(|msg| {
+            eprintln!("{}", fmt_error(&msg));
+            1
+        })
+    };
 
-    Ok(0)
+    // If bundled via an entrypoint, the first argument is 'python' so skip it:
+    // let args = Args::parse_from_python();
+
+    exit(exit_code);
 }
 
 #[allow(clippy::unused_async)]

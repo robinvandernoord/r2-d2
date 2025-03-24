@@ -1,4 +1,5 @@
 import asyncio
+import traceback
 
 from .r2_d2 import *  # src/lib.rs
 
@@ -14,17 +15,10 @@ async def main_py_async():
     Async entrypoint ('main_rs' can't be used with asyncio.run directly)
     """
     try:
-        print('pre')
         exit_code = await main_rs()
-        print('success')
-    except RuntimeError as e:
-        print(":3")
-        raise ValueError("Something went wrong in Rust land") from e
-        exit_code = 1
     except BaseException as e:
-        print(f"Unexpected error {type(e)}", e)
-    finally:
-        print('post')
+        traceback.print_exception(e)
+        exit_code = 1
 
     exit(exit_code)
 
