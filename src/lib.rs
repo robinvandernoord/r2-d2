@@ -10,11 +10,12 @@ use pyo3::{PyAny, PyResult, Python, prelude as pyo};
 use std::process::exit;
 use std::{env, io};
 
-mod cli;
+pub mod cli;
 pub mod commands;
 pub mod helpers;
 pub mod r2;
-mod r2_upload;
+pub mod r2_upload;
+pub mod rustic_backends;
 
 pub fn print_completions<G: Generator>(
     generator: G,

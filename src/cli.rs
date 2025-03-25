@@ -40,7 +40,7 @@ pub const fn get_styles() -> clap::builder::Styles {
 }
 
 pub trait Process {
-    async fn process(self) -> anyhow::Result<i32>;
+    fn process(self) -> impl Future<Output = anyhow::Result<i32>> + Send;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Parser)]
@@ -62,6 +62,9 @@ pub struct OverviewOptions {}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
 pub struct UploadOptions {}
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
+pub struct InitOptions {}
+
 macro_rules! register_cli {
     ($name:ident { $($variant:ident($opts:ty)),* $(,)? }) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Parser)]
@@ -82,6 +85,7 @@ macro_rules! register_cli {
 // Usage
 register_cli!(Commands {
     Auth(AuthOptions),
+    Init(InitOptions),
     Overview(OverviewOptions),
     Upload(UploadOptions),
 });

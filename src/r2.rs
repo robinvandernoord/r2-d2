@@ -1,5 +1,6 @@
 use crate::commands::list::ListOptions;
 use crate::helpers::IntoPythonError;
+use crate::rustic_backends::r2_backend::R2Backend;
 use anyhow::{Context, anyhow, bail};
 use aws_config::{Region, SdkConfig};
 use aws_credential_types::provider::SharedCredentialsProvider;
@@ -14,12 +15,14 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder};
 use resolve_path::PathResolveExt;
+use rustic_core::{NoProgressBars, Repository, RepositoryBackends, RepositoryOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::{Debug, Display};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use url::Url;
 
 const CLOUDFLARE_API: &str = "https://api.cloudflare.com/client/v4/";
@@ -307,6 +310,8 @@ pub fn to_query_part<T: Into<String>>(
     format!("{}={}", key, value.into())
 }
 
+pub type ResticRepository = Repository<NoProgressBars, ()>;
+
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct R2D2 {
     account_id: String,
@@ -314,7 +319,7 @@ pub struct R2D2 {
     aws_access_key_id: Option<String>,
     aws_secret_access_key: Option<String>,
     pub bucket: Option<String>,
-    // key id and secret?
+    // todo: repo password
 }
 
 macro_rules! bucket_request {
@@ -440,6 +445,24 @@ impl R2D2 {
         Ok(S3Client::new(&shared_config))
     }
 
+    pub fn into_rustic(self) -> anyhow::Result<ResticRepository> {
+        let repo_opts = RepositoryOptions::default().password("test");
+
+        let backend = R2Backend::try_new(
+            self.account_id,
+            self.aws_access_key_id.unwrap_or_default(),
+            self.aws_secret_access_key.unwrap_or_default(),
+            self.bucket.unwrap_or_default(),
+        )?;
+
+        let backends = RepositoryBackends::new(Arc::new(backend), None);
+
+        // fixme: use progress bar `Repository::new_with_progress`
+        let repo = Repository::new(&repo_opts, &backends)?;
+
+        Ok(repo)
+    }
+
     pub fn endpoint_url(&self) -> String {
         format!("https://{}.r2.cloudflarestorage.com", &self.account_id,)
     }
@@ -556,7 +579,7 @@ impl R2D2 {
         let domain = domains.pop()?;
         let domain_with_schema = format!("https://{domain}");
 
-        dbg!(Url::parse(&domain_with_schema)).ok()
+        Url::parse(&domain_with_schema).ok()
     }
 
     pub async fn bucket_custom_domains(
