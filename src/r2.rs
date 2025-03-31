@@ -3,27 +3,19 @@ use crate::helpers::IntoPythonError;
 use crate::rustic_backends::r2_backend::R2Backend;
 use crate::rustic_progress::ProgressBar;
 use anyhow::{Context, anyhow, bail};
-use aws_config::{Region, SdkConfig};
-use aws_credential_types::provider::SharedCredentialsProvider;
-use aws_credential_types::provider::error::CredentialsError;
-use aws_credential_types::{Credentials, provider};
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::config::ProvideCredentials;
-use aws_smithy_runtime_api::client::stalled_stream_protection::StalledStreamProtectionConfig;
 use dotenvy::from_path_iter;
 use pyo3::PyResult;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder};
 use resolve_path::PathResolveExt;
-use rustic_core::{Repository, RepositoryBackends, RepositoryOptions};
+use rustic_core::{Repository, RepositoryOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::{Debug, Display};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use url::Url;
 
 const CLOUDFLARE_API: &str = "https://api.cloudflare.com/client/v4/";
@@ -426,38 +418,41 @@ impl R2D2 {
         Ok(bucket.to_string())
     }
 
-    /// `SharedCredentialsProvider` eats self so it needs to be owned.
-    pub fn into_s3(self) -> anyhow::Result<S3Client> {
-        let url = self.endpoint_url();
-        let region = Region::from_static("auto");
-        let provider = SharedCredentialsProvider::new(self);
+    // /// `SharedCredentialsProvider` eats self so it needs to be owned.
+    // pub fn into_s3(self) -> anyhow::Result<S3Client> {
+    //     let url = self.endpoint_url();
+    //     let region = Region::from_static("auto");
+    //     let provider = SharedCredentialsProvider::new(self);
+    //
+    //     let shared_config = SdkConfig::builder()
+    //         .region(Some(region))
+    //         .endpoint_url(url)
+    //         .credentials_provider(provider)
+    //         .stalled_stream_protection(
+    //             // allow low throughput (otherwise you get DispatchFailure/ThroughputBelowMinimum)
+    //             StalledStreamProtectionConfig::enabled()
+    //                 .upload_enabled(false)
+    //                 .build(),
+    //         )
+    //         .build();
+    //
+    //     Ok(S3Client::new(&shared_config))
+    // }
 
-        let shared_config = SdkConfig::builder()
-            .region(Some(region))
-            .endpoint_url(url)
-            .credentials_provider(provider)
-            .stalled_stream_protection(
-                // allow low throughput (otherwise you get DispatchFailure/ThroughputBelowMinimum)
-                StalledStreamProtectionConfig::enabled()
-                    .upload_enabled(false)
-                    .build(),
-            )
-            .build();
-
-        Ok(S3Client::new(&shared_config))
+    pub fn into_opendal_backend(self) -> anyhow::Result<R2Backend> {
+        R2Backend::try_new(
+            self.account_id,
+            self.aws_access_key_id.unwrap_or_default(),
+            self.aws_secret_access_key.unwrap_or_default(),
+            self.bucket.unwrap_or_default(),
+        )
     }
 
     pub fn into_rustic(self) -> anyhow::Result<ResticRepository> {
         let repo_opts = RepositoryOptions::default().password("test");
 
-        let backend = R2Backend::try_new(
-            self.account_id,
-            self.aws_access_key_id.unwrap_or_default(),
-            self.aws_secret_access_key.unwrap_or_default(),
-            self.bucket.unwrap_or_default(),
-        )?;
-
-        let backends = RepositoryBackends::new(Arc::new(backend), None);
+        let backend = self.into_opendal_backend()?;
+        let backends = backend.into_backends();
 
         let progress_bar = ProgressBar::default();
         let repo = Repository::new_with_progress(&repo_opts, &backends, progress_bar)?;
@@ -505,18 +500,18 @@ impl R2D2 {
         Some(headers)
     }
 
-    /// this function is async becuase `provider::future::ProvideCredentials` expects that
-    #[allow(clippy::unused_async)]
-    pub async fn aws_credentials(&self) -> Result<Credentials, CredentialsError> {
-        let (Some(key_id), Some(secret)) = (&self.aws_access_key_id, &self.aws_secret_access_key)
-        else {
-            return Err(CredentialsError::invalid_configuration(
-                "`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are required for `upload`.",
-            ));
-        };
-
-        Ok(Credentials::new(key_id, secret, None, None, "r2-d2"))
-    }
+    // /// this function is async becuase `provider::future::ProvideCredentials` expects that
+    // #[allow(clippy::unused_async)]
+    // pub async fn aws_credentials(&self) -> Result<Credentials, CredentialsError> {
+    //     let (Some(key_id), Some(secret)) = (&self.aws_access_key_id, &self.aws_secret_access_key)
+    //     else {
+    //         return Err(CredentialsError::invalid_configuration(
+    //             "`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` are required for `upload`.",
+    //         ));
+    //     };
+    //
+    //     Ok(Credentials::new(key_id, secret, None, None, "r2-d2"))
+    // }
 
     pub fn set_bucket(
         &mut self,
@@ -655,11 +650,11 @@ impl R2D2 {
     }
 }
 
-impl ProvideCredentials for R2D2 {
-    fn provide_credentials<'a>(&'a self) -> provider::future::ProvideCredentials<'a>
-    where
-        Self: 'a,
-    {
-        provider::future::ProvideCredentials::new(self.aws_credentials())
-    }
-}
+// impl ProvideCredentials for R2D2 {
+//     fn provide_credentials<'a>(&'a self) -> provider::future::ProvideCredentials<'a>
+//     where
+//         Self: 'a,
+//     {
+//         provider::future::ProvideCredentials::new(self.aws_credentials())
+//     }
+// }

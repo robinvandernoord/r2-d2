@@ -60,7 +60,11 @@ impl R2Backend {
         })
     }
 
-    pub fn to_backends(self) -> RepositoryBackends {
+    pub fn into_operator(self) -> Operator {
+        self.operator
+    }
+
+    pub fn into_backends(self) -> RepositoryBackends {
         RepositoryBackends::new(Arc::new(self), None)
     }
 

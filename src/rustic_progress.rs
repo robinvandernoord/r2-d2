@@ -54,15 +54,17 @@ impl ProgressState {
     }
 
     fn prefix(&self) -> String {
+        // title is static, prefix can be dynamic
+        // so it makes sense to first print the `title` and then the `prefix`
         let mut result = String::new();
-
-        if !self.prefix.is_empty() {
-            result.push_str(&self.prefix);
-            result.push(' ');
-        }
 
         if !self.title.is_empty() {
             result.push_str(&self.title);
+            result.push(' ');
+        }
+
+        if !self.prefix.is_empty() {
+            result.push_str(&self.prefix);
             result.push(' ');
         }
 
@@ -268,32 +270,50 @@ impl Progress for ProgressType {
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Default, Hash)]
 pub struct ProgressBar {}
 
+impl ProgressBar {
+    pub const fn hidden() -> ProgressType {
+        ProgressType::Hidden
+    }
+
+    pub fn bytes(prefix: impl Into<Cow<'static, str>>) -> ProgressType {
+        ProgressType::Bytes(ProgressState::new_mutex(prefix))
+    }
+
+    pub fn counter(prefix: impl Into<Cow<'static, str>>) -> ProgressType {
+        ProgressType::Counter(ProgressState::new_mutex(prefix))
+    }
+
+    pub fn spinner(prefix: impl Into<Cow<'static, str>>) -> ProgressType {
+        ProgressType::Spinner(ProgressState::new_mutex(prefix))
+    }
+}
+
 impl ProgressBars for ProgressBar {
     type P = ProgressType;
 
     fn progress_hidden(&self) -> Self::P {
-        ProgressType::Hidden
+        Self::hidden()
     }
 
     fn progress_spinner(
         &self,
         prefix: impl Into<Cow<'static, str>>,
     ) -> Self::P {
-        ProgressType::Spinner(ProgressState::new_mutex(prefix))
+        Self::spinner(prefix)
     }
 
     fn progress_counter(
         &self,
         prefix: impl Into<Cow<'static, str>>,
     ) -> Self::P {
-        ProgressType::Counter(ProgressState::new_mutex(prefix))
+        Self::counter(prefix)
     }
 
     fn progress_bytes(
         &self,
         prefix: impl Into<Cow<'static, str>>,
     ) -> Self::P {
-        ProgressType::Bytes(ProgressState::new_mutex(prefix))
+        Self::bytes(prefix)
     }
 }
 

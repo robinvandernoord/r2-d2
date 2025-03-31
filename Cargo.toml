@@ -35,21 +35,20 @@ tabled = { version = "0.15", features = ["ansi"] }
 byte-unit = "5.1"
 owo-colors = "4.0"
 anyhow = "1.0"
-scopeguard = "1.2"
+scopeguard = "1.2" # defer
 
 # aws:
-# rust-s3 = "0.34"
-aws-config = { version = "1.5", features = ["behavior-version-latest"] }
-aws-sdk-s3 = { version = "1.38", features = ["rt-tokio", "behavior-version-latest"] }
-aws-smithy-runtime = { version = "1.6" }
-aws-smithy-runtime-api = { version = "1.7", features = ["client"] }
-aws-smithy-types = { version = "1.2", features = ["http-body-0-4-x"] }
-aws-credential-types = { version = "1.2" }
+# aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+# aws-sdk-s3 = { version = "1.38", features = ["rt-tokio", "behavior-version-latest"] }
+# aws-smithy-runtime = { version = "1.6" }
+# aws-smithy-runtime-api = { version = "1.7", features = ["client"] }
+# aws-smithy-types = { version = "1.2", features = ["http-body-0-4-x"] }
+# aws-credential-types = { version = "1.2" }
 
 # restic
 rustic_core = { version = "0.7.3", default-features = false }
-rustic_backend = { version = "0.5.2", default-features = false, features = ["opendal"] }
-opendal = {version = "0.52.0", default-features = false, features = ["services-s3", "layers-blocking"]}
+# rustic_backend = { version = "0.5.2", default-features = false, features = ["opendal"] }
+opendal = { version = "0.52.0", default-features = false, features = ["services-s3", "layers-blocking"] }
 bytes = "1.10.1"
 typed-path = "0.10.0"
 

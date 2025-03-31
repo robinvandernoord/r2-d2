@@ -1,214 +1,39 @@
 use anyhow::{Context, bail};
-use std::future::Future;
-use std::io;
-use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
-use std::time::Duration;
 
-use aws_sdk_s3::Client as S3Client;
-use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
-use aws_smithy_types::byte_stream::{ByteStream, Length};
-use futures::future::try_join_all;
-use scopeguard::defer;
-use tokio::sync::Mutex;
+use opendal::Operator;
+use rustic_core::Progress;
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 use crate::r2::R2D2;
+use crate::rustic_progress::ProgressBar;
 
 // In bytes; minimum chunk size is 5 MB; increase CHUNK_SIZE to send larger chunks:
-const CHUNK_SIZE: u64 = 1024 * 1024 * 15;
+const CHUNK_SIZE: u64 = 1024 * 1024 * 50; // 50 MB
 const MAX_CHUNKS: u64 = 10000;
 
-struct MultipartUpload<'a> {
-    client: &'a S3Client,
-    path: &'a Path,
-    upload_id: &'a str,
-    key: &'a str,
-    bucket: &'a str,
-}
+async fn upload_file_with_opendal(
+    operator: Operator,
+    file_path: &str,
+) -> anyhow::Result<String> {
+    let path = Path::new(file_path);
 
-impl<'a> MultipartUpload<'a> {
-    pub const fn new(
-        client: &'a S3Client,
-        path: &'a Path,
-        upload_id: &'a str,
-        key: &'a str,
-        bucket: &'a str,
-    ) -> Self {
-        Self {
-            client,
-            path,
-            upload_id,
-            key,
-            bucket,
-        }
-    }
-}
-
-async fn upload_chunk(
-    to_upload: &MultipartUpload<'_>,
-    part_number: i32,
-    chunk_index: u64,
-    chunk_size: u64,
-    progress: Arc<Mutex<ProgressState>>,
-) -> anyhow::Result<CompletedPart> {
-    let stream = ByteStream::read_from()
-        .path(to_upload.path)
-        .offset(chunk_index * CHUNK_SIZE)
-        .length(Length::UpTo(chunk_size))
-        .build()
-        .await?;
-
-    let upload_part_res = to_upload
-        .client
-        .upload_part()
-        .key(to_upload.key)
-        .bucket(to_upload.bucket)
-        .upload_id(to_upload.upload_id)
-        .body(stream)
-        .part_number(part_number)
-        .send()
-        .await
-        .with_context(|| format!("Something went wrong uploading part {part_number}."))?;
-
-    // get mutex lock and update value:
-    progress.lock().await.update(chunk_size);
-
-    let e_tag = upload_part_res.e_tag.unwrap_or_default();
-
-    Ok(CompletedPart::builder()
-        .e_tag(e_tag)
-        .part_number(part_number)
-        .build())
-}
-
-#[derive(Debug)]
-struct ProgressState {
-    total_uploaded: f64,
-    expected_size: f64,
-}
-
-#[allow(clippy::cast_precision_loss)]
-impl ProgressState {
-    const fn new(expected_size: u64) -> Self {
-        Self {
-            total_uploaded: 0f64,
-            expected_size: expected_size as f64,
-        }
-    }
-
-    fn update(
-        &mut self,
-        uploaded: u64,
-    ) {
-        self.total_uploaded += uploaded as f64;
-    }
-
-    #[allow(dead_code)]
-    fn percentage(&self) -> String {
-        let raw = self.total_uploaded / self.expected_size;
-
-        format!("{:.2}%", raw * 100.0)
-    }
-
-    fn bar(&self) -> String {
-        let raw = self.total_uploaded / self.expected_size;
-        let percent = raw * 100.0;
-
-        // Define the number of characters for the bar, e.g., 20 characters
-        let bar_length: i32 = 20;
-
-        // Calculate the number of '#' characters to display based on the percentage
-        let filled_length = (f64::from(bar_length) * raw).round() as i32;
-
-        // Create the progress bar string
-        let mut bar = String::new();
-        for _ in 0..filled_length {
-            bar.push('#');
-        }
-        for _ in filled_length..bar_length {
-            bar.push(' ');
-        }
-
-        // Format the output with percentage and progress bar
-        format!(
-            "[{}]{} {:.2}%",
-            bar,
-            if percent >= 100.0 {
-                "##"
-            } else if percent >= 95.0 {
-                "# "
-            } else {
-                "  "
-            },
-            percent
-        )
-    }
-}
-
-async fn display_upload_feedback(progress: Arc<Mutex<ProgressState>>) {
-    let spinner_chars = ['|', '/', '-', '\\'];
-    let mut idx = 0;
-    loop {
-        eprint!(
-            "\rUploading {} {}",
-            spinner_chars[idx],
-            progress.lock().await.bar()
-        );
-        idx = (idx + 1) % spinner_chars.len();
-        io::stdout().flush().unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-async fn run_upload_tasks<R>(
-    promises: Vec<impl Future<Output = anyhow::Result<R>>>,
-    progress: Arc<Mutex<ProgressState>>,
-) -> anyhow::Result<Vec<R>> {
-    let upload_feedback = tokio::task::spawn(display_upload_feedback(progress));
-
-    defer! {
-        upload_feedback.abort(); // Abort the spinner loop as download completes
-        eprint!("\r\x1B[2K"); // clear the line
-    }
-
-    // Use try_join to run all promises in parallel and handle failures
-    try_join_all(promises).await
-}
-
-pub async fn upload_file(
-    r2: R2D2,
-    file_path: String,
-    bucket: Option<String>,
-) -> anyhow::Result<()> {
-    let path = Path::new(&file_path);
     let key = path
         .file_name()
         .unwrap_or_default()
         .to_str()
-        .unwrap_or_default();
-    let Ok(metadata) = tokio::fs::metadata(path).await else {
-        bail!("`{file_path}` does not seem to exist.");
-    };
+        .unwrap_or_default()
+        .to_owned();
 
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .with_context(|| format!("`{file_path}` does not seem to exist."))?;
     let file_size = metadata.len();
 
-    let bucket = r2.bucket_or(&bucket)?;
-    let client = r2.clone().into_s3()?;
-
-    let multipart_upload_res = client
-        .create_multipart_upload()
-        .bucket(&bucket)
-        .key(key)
-        .send()
-        .await
-        .with_context(|| {
-            format!("Something went wrong trying to upload to {}. Are you sure you have the right credentials and bucket name?", &bucket)
-        })?;
-
-    let Some(upload_id) = multipart_upload_res.upload_id() else {
-        bail!("No upload ID, can't continue");
-    };
+    if file_size == 0 {
+        bail!("Bad file size (0).");
+    }
 
     let mut chunk_count = (file_size / CHUNK_SIZE) + 1;
     let mut size_of_last_chunk = file_size % CHUNK_SIZE;
@@ -217,65 +42,74 @@ pub async fn upload_file(
         chunk_count -= 1;
     }
 
-    if file_size == 0 {
-        bail!("Bad file size (0).");
-    }
     if chunk_count > MAX_CHUNKS {
         bail!("Too many chunks! Try increasing your chunk size.");
     }
 
-    let to_upload = MultipartUpload::new(&client, path, upload_id, key, &bucket);
+    let pb = ProgressBar::bytes(key.clone());
+    pb.set_title("Uploading");
+    pb.set_length(file_size);
 
-    let mut promises = vec![];
-    let progress = Arc::new(Mutex::new(ProgressState::new(file_size)));
+    let mut writer = operator.writer(&key).await?;
+
+    // Read and upload in chunks
+    let mut file = File::open(path).await?;
 
     for chunk_index in 0..chunk_count {
-        // Chunk index needs to start at 0, but part numbers start at 1.
-        let part_number = (chunk_index as i32) + 1;
-
-        let this_chunk = if chunk_count - 1 == chunk_index {
+        let this_chunk_size = if chunk_index == chunk_count - 1 {
             size_of_last_chunk
         } else {
             CHUNK_SIZE
         };
 
-        let promise = upload_chunk(
-            &to_upload,
-            part_number,
-            chunk_index,
-            this_chunk, // -> chunk size
-            Arc::clone(&progress),
-        );
+        let mut buffer = vec![0u8; this_chunk_size as usize];
+        file.read_exact(&mut buffer).await.with_context(|| {
+            format!(
+                "Failed to read chunk {} from `{}`",
+                chunk_index + 1,
+                file_path
+            )
+        })?;
 
-        promises.push(promise);
+        writer
+            .write(buffer)
+            .await
+            .with_context(|| format!("Failed to upload chunk {}", chunk_index + 1))?;
+
+        pb.inc(this_chunk_size);
     }
 
-    let upload_parts = run_upload_tasks(promises, Arc::clone(&progress)).await?;
+    writer.close().await?;
+    pb.finish();
 
-    let completed_multipart_upload: CompletedMultipartUpload = CompletedMultipartUpload::builder()
-        .set_parts(Some(upload_parts))
-        .build();
+    Ok(key)
+}
+pub async fn upload_file(
+    r2: &R2D2,
+    file_path: String,
+    bucket: Option<String>,
+) -> anyhow::Result<String> {
+    let mut r2_op = r2.clone();
 
-    let _completed_multipart_upload_output = client
-        .complete_multipart_upload()
-        .bucket(&bucket)
-        .key(key)
-        .multipart_upload(completed_multipart_upload)
-        .upload_id(upload_id)
-        .send()
-        .await
-        .with_context(|| "Something went wrong completing the upload.")?;
+    if bucket.is_some() {
+        r2_op.set_bucket(bucket);
+    }
+
+    let bucket = r2_op.bucket.clone();
+
+    let op = r2_op.into_opendal_backend()?.into_operator();
+    let key = upload_file_with_opendal(op, &file_path).await?;
 
     // bucket domain + key = public url
-    if let Some(domain) = r2.bucket_domain(Some(bucket)).await {
-        let url = domain
-            .join(key)
-            .map(|it| it.to_string())
-            .unwrap_or_default();
-        println!("File uploaded! {url}");
-    } else {
-        println!("File uploaded!");
-    }
+    let url = r2
+        .bucket_domain(bucket)
+        .await
+        .map_or_else(String::new, |domain| {
+            domain
+                .join(&key)
+                .map(|it| it.to_string())
+                .unwrap_or_default()
+        });
 
-    Ok(())
+    Ok(dbg!(url))
 }
