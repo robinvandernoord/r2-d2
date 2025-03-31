@@ -1,6 +1,7 @@
 use crate::commands::list::ListOptions;
 use crate::helpers::IntoPythonError;
 use crate::rustic_backends::r2_backend::R2Backend;
+use crate::rustic_progress::ProgressBar;
 use anyhow::{Context, anyhow, bail};
 use aws_config::{Region, SdkConfig};
 use aws_credential_types::provider::SharedCredentialsProvider;
@@ -15,7 +16,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use reqwest::header::HeaderMap;
 use reqwest::{Client, RequestBuilder};
 use resolve_path::PathResolveExt;
-use rustic_core::{NoProgressBars, Repository, RepositoryBackends, RepositoryOptions};
+use rustic_core::{Repository, RepositoryBackends, RepositoryOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
@@ -310,7 +311,8 @@ pub fn to_query_part<T: Into<String>>(
     format!("{}={}", key, value.into())
 }
 
-pub type ResticRepository = Repository<NoProgressBars, ()>;
+pub type ResticRepository = Repository<ProgressBar, ()>;
+// pub type ResticRepository = Repository<ProgressOptions, ()>;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct R2D2 {
@@ -457,8 +459,8 @@ impl R2D2 {
 
         let backends = RepositoryBackends::new(Arc::new(backend), None);
 
-        // fixme: use progress bar `Repository::new_with_progress`
-        let repo = Repository::new(&repo_opts, &backends)?;
+        let progress_bar = ProgressBar::default();
+        let repo = Repository::new_with_progress(&repo_opts, &backends, progress_bar)?;
 
         Ok(repo)
     }

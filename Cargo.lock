@@ -3727,7 +3727,6 @@ dependencies = [
  "clap_complete",
  "dotenvy",
  "futures",
- "lazy_static",
  "opendal 0.52.0",
  "owo-colors 4.2.0",
  "pyo3",

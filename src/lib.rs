@@ -16,6 +16,7 @@ pub mod helpers;
 pub mod r2;
 pub mod r2_upload;
 pub mod rustic_backends;
+mod rustic_progress;
 
 pub fn print_completions<G: Generator>(
     generator: G,

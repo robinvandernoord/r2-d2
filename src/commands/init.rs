@@ -28,7 +28,7 @@ fn create_snapshot(repo: ResticRepository) -> anyhow::Result<()> {
     // run the backup and return the snapshot pointing to the backup'ed data.
     let snap = repo.backup(&backup_opts, &source, snap)?;
 
-    dbg!(snap);
+    dbg!(snap.time);
 
     Ok(())
 }
@@ -39,7 +39,7 @@ fn get_snapshots(repo: ResticRepository) -> anyhow::Result<()> {
     // Get all snapshots from the repository
     let snaps = repo.get_all_snapshots()?;
 
-    dbg!(snaps);
+    dbg!(snaps.len());
 
     Ok(())
 }
@@ -54,10 +54,13 @@ impl Process for InitOptions {
         // init_repo(repo)?;
 
         // Make snapshot
-        create_snapshot(repo.clone())?;
+        // create_snapshot(repo.clone())?;
 
         // List snapshots
         get_snapshots(repo)?;
+
+        // Test Progressbar
+        // crate::rustic_progress::test_progressbar();
 
         Ok(0)
     }
