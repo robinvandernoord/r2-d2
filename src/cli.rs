@@ -54,7 +54,11 @@ pub struct Args {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
-pub struct AuthOptions {}
+pub struct AuthOptions {
+    // add a boolean option to show full key:
+    #[clap(short, long, help = "Show full key")]
+    pub show: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
 pub struct OverviewOptions {}

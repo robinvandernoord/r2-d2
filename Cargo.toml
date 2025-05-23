@@ -51,6 +51,7 @@ rustic_core = { version = "0.7.3", default-features = false }
 opendal = { version = "0.52.0", default-features = false, features = ["services-s3", "layers-blocking"] }
 bytes = "1.10.1"
 typed-path = "0.10.0"
+toml = "0.8.22"
 
 [lints.clippy]
 # categories:

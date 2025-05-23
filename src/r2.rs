@@ -13,8 +13,9 @@ use rustic_core::{Repository, RepositoryOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::env;
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Formatter};
 use std::io::BufReader;
+use std::ops::{BitAnd, BitOr};
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -306,7 +307,16 @@ pub fn to_query_part<T: Into<String>>(
 pub type ResticRepository = Repository<ProgressBar, ()>;
 // pub type ResticRepository = Repository<ProgressOptions, ()>;
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Default)]
+pub struct R2D2Builder {
+    account_id: Option<String>,
+    apikey: Option<String>,
+    aws_access_key_id: Option<String>,
+    aws_secret_access_key: Option<String>,
+    bucket: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct R2D2 {
     account_id: String,
     apikey: String,
@@ -349,9 +359,43 @@ macro_rules! api_to_python {
     };
 }
 
-impl R2D2 {
-    // low-level: config, setup stuff:
+// Config1 & Config2 -> overwrite existing
+impl BitAnd for R2D2Builder {
+    type Output = R2D2Builder;
 
+    fn bitand(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        Self {
+            account_id: rhs.account_id.or(self.account_id),
+            apikey: rhs.apikey.or(self.apikey),
+            aws_access_key_id: rhs.aws_access_key_id.or(self.aws_access_key_id),
+            aws_secret_access_key: rhs.aws_secret_access_key.or(self.aws_secret_access_key),
+            bucket: rhs.bucket.or(self.bucket),
+        }
+    }
+}
+
+// Config1 | Config2 -> fill missing
+impl BitOr for R2D2Builder {
+    type Output = R2D2Builder;
+
+    fn bitor(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        Self {
+            account_id: self.account_id.or(rhs.account_id),
+            apikey: self.apikey.or(rhs.apikey),
+            aws_access_key_id: self.aws_access_key_id.or(rhs.aws_access_key_id),
+            aws_secret_access_key: self.aws_secret_access_key.or(rhs.aws_secret_access_key),
+            bucket: self.bucket.or(rhs.bucket),
+        }
+    }
+}
+
+impl R2D2Builder {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let abs_path = path
             .try_resolve()
@@ -359,8 +403,8 @@ impl R2D2 {
 
         if let Some(config) = read_configfile(&abs_path) {
             Ok(Self {
-                account_id: get_from_config(&config, "R2_ACCOUNT_ID")?,
-                apikey: get_from_config(&config, "R2_API_KEY")?,
+                account_id: get_from_config(&config, "R2_ACCOUNT_ID").ok(),
+                apikey: get_from_config(&config, "R2_API_KEY").ok(),
                 bucket: get_from_config(&config, "R2_BUCKET").ok(),
                 aws_access_key_id: get_from_config(&config, "R2_ACCESS_KEY_ID").ok(),
                 aws_secret_access_key: get_from_config(&config, "R2_SECRET_ACCESS_KEY").ok(),
@@ -390,21 +434,60 @@ impl R2D2 {
 
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
-            account_id: get_from_env("R2_ACCOUNT_ID")?,
-            apikey: get_from_env("R2_API_KEY")?,
+            account_id: get_from_env("R2_ACCOUNT_ID").ok(),
+            apikey: get_from_env("R2_API_KEY").ok(),
             bucket: get_from_env("R2_BUCKET").ok(),
             aws_access_key_id: get_from_env("R2_ACCESS_KEY_ID").ok(),
             aws_secret_access_key: get_from_env("R2_SECRET_ACCESS_KEY").ok(),
         })
     }
 
+    fn is_complete(&self) -> bool {
+        self.account_id.is_some() && self.apikey.is_some()
+        // other fields are optionsal in R2D2
+    }
+}
+
+impl TryFrom<R2D2Builder> for R2D2 {
+    type Error = anyhow::Error;
+
+    fn try_from(value: R2D2Builder) -> Result<Self, Self::Error> {
+        if !value.is_complete() {
+            bail!("Incomplete config");
+        }
+
+        Ok(Self {
+            account_id: value
+                .account_id
+                .expect("Should be filled if value.is_complete"),
+            apikey: value.apikey.expect("Should be filled if value.is_complete"),
+            aws_access_key_id: value.aws_access_key_id,
+            aws_secret_access_key: value.aws_secret_access_key,
+            bucket: value.bucket,
+        })
+    }
+}
+
+impl R2D2 {
+    // low-level: config, setup stuff:
+
     pub fn guess() -> anyhow::Result<Self> {
         // .r2, then .env, then environment variables
-        Self::from_dot_r2()
-            .or_else(|_| Self::from_dotenv())
-            .or_else(|_| Self::from_env())
-            .or_else(|_| Self::from_global_dot_r2())
-            .with_context(|| "No config could be found (tried .r2, .env, environment variables)")
+
+        let settings_local = R2D2Builder::from_dot_r2().unwrap_or_default();
+        let settings_global = R2D2Builder::from_global_dot_r2().unwrap_or_default();
+        let settings_env = R2D2Builder::from_env().unwrap_or_default();
+        let settings_dotenv = R2D2Builder::from_dotenv().unwrap_or_default();
+
+        // use & to overwrite
+        // use | to fill
+        let settings_combined = settings_global & settings_env & settings_local & settings_dotenv;
+
+        if settings_combined.is_complete() {
+            settings_combined.try_into()
+        } else {
+            bail!("No complete config could be found (tried .r2, .env, environment variables)")
+        }
     }
 
     pub fn bucket_or(
@@ -647,6 +730,17 @@ impl R2D2 {
         let data = api_to_python!(self, list, options)?;
 
         Ok(data.buckets)
+    }
+}
+
+impl Display for R2D2 {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>,
+    ) -> std::fmt::Result {
+        // convert to toml:
+        let toml = toml::to_string(&self).unwrap_or_default();
+        write!(f, "{}", toml)
     }
 }
 
