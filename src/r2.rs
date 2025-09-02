@@ -1,4 +1,5 @@
 use crate::commands::list::ListOptions;
+use crate::commands::wipe::DeleteOptions;
 use crate::helpers::IntoPythonError;
 use crate::rustic_backends::r2_backend::R2Backend;
 use crate::rustic_progress::ProgressBar;
@@ -17,6 +18,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::BufReader;
 use std::ops::{BitAnd, BitOr};
 use std::path::{Path, PathBuf};
+use opendal::Operator;
 use url::Url;
 
 const CLOUDFLARE_API: &str = "https://api.cloudflare.com/client/v4/";
@@ -46,6 +48,12 @@ fn read_configfile(path: &PathBuf) -> Option<BTreeMap<String, String>> {
     }
 
     Some(config)
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EmptyResponse {
+    // different from () since this can still be loaded from a `map`
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -171,10 +179,8 @@ pub struct BucketResultData {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BucketData {
     pub name: String,
-    #[serde(rename = "creationDate")]
     pub creation_date: String,
     pub location: Option<String>,
-    #[serde(rename = "storageClass")]
     pub storage_class: Option<String>,
 }
 
@@ -425,7 +431,7 @@ impl R2D2Builder {
     }
 
     pub fn from_global_dot_r2() -> anyhow::Result<Self> {
-        Self::from_filename("~/.r2")
+        Self::from_filename("~/.r2").or_else(|_| Self::from_filename("~/.config/.r2"))
     }
 
     pub fn from_dotenv() -> anyhow::Result<Self> {
@@ -531,6 +537,12 @@ impl R2D2 {
         )
     }
 
+    pub fn into_opendal_operator(self) -> anyhow::Result<Operator> {
+        let backend = self.into_opendal_backend()?;
+
+        Ok(backend.into_operator())
+    }
+
     pub fn into_rustic(self) -> anyhow::Result<ResticRepository> {
         let repo_opts = RepositoryOptions::default().password("test");
 
@@ -571,6 +583,19 @@ impl R2D2 {
         let client = Client::new();
         let url = self.build_url(endpoint)?.to_string();
         let request = client.get(url);
+
+        self.headers().map(|headers| request.headers(headers))
+    }
+
+    // todo: request POST/PUT/...
+
+    pub fn request_delete(
+        &self,
+        endpoint: &str,
+    ) -> Option<RequestBuilder> {
+        let client = Client::new();
+        let url = self.build_url(endpoint)?.to_string();
+        let request = client.delete(url);
 
         self.headers().map(|headers| request.headers(headers))
     }
@@ -716,8 +741,6 @@ impl R2D2 {
 
         let options = options.unwrap_or_default();
 
-        dbg!(options);
-
         request.send_and_parse().await
     }
 
@@ -730,6 +753,29 @@ impl R2D2 {
         let data = api_to_python!(self, list, options)?;
 
         Ok(data.buckets)
+    }
+
+    pub async fn delete_bucket(
+        &self,
+        bucket: &str,
+        options: Option<DeleteOptions>,
+    ) -> anyhow::Result<ApiResponse<EmptyResponse>> {
+        let endpoint = format!("buckets/{bucket}");
+        let Some(request) = self.request_delete(&endpoint) else {
+            bail!("Request for '{}' could not be set up.", "usage");
+        };
+
+        request.send_and_parse().await
+    }
+
+    pub async fn delete_bucket_py(
+        &self,
+        bucket: &str,
+        options: Option<DeleteOptions>,
+    ) -> PyResult<EmptyResponse> {
+        let data = api_to_python!(self, delete_bucket, bucket, options)?;
+
+        Ok(data)
     }
 }
 

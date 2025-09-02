@@ -69,6 +69,19 @@ pub struct UploadOptions {}
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
 pub struct InitOptions {}
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
+pub struct WipeOptions {
+    #[clap(short, long, help = "Don't ask for confirmation")]
+    pub yes: bool,
+    pub bucket: Option<String>,
+
+    #[clap(long, help = "Also remove bucket contents (bucket must be empty before removing)", default_value = "true")]
+    pub include_contents: bool,
+
+    #[clap(long, help = "Also remove bucket itself", default_value = "true")]
+    pub include_bucket: bool,
+}
+
 macro_rules! register_cli {
     ($name:ident { $($variant:ident($opts:ty)),* $(,)? }) => {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Parser)]
@@ -88,8 +101,12 @@ macro_rules! register_cli {
 
 // Usage
 register_cli!(Commands {
+    // main commands
+
+    // helper commands
     Auth(AuthOptions),
     Init(InitOptions),
     Overview(OverviewOptions),
     Upload(UploadOptions),
+    Wipe(WipeOptions)
 });

@@ -97,7 +97,7 @@ pub async fn upload_file(
 
     let bucket = r2_op.bucket.clone();
 
-    let op = r2_op.into_opendal_backend()?.into_operator();
+    let op = r2_op.into_opendal_operator()?;
     let key = upload_file_with_opendal(op, &file_path).await?;
 
     // bucket domain + key = public url
