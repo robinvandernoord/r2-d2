@@ -1,3 +1,8 @@
+#![expect(
+    clippy::literal_string_with_formatting_args,
+    reason = "Rustic Errors expect formatting like that and may include extra variables not known at this point."
+)]
+
 use bytes::Bytes;
 use opendal::Operator;
 use opendal::services::S3 as S3Builder;
@@ -15,9 +20,9 @@ use typed_path::UnixPathBuf;
 #[derive(Clone, Debug)]
 pub struct R2Backend {
     account_id: String,
-    key_id: String,
-    secret: String,
-    bucket: String,
+    // key_id: String,
+    // secret: String,
+    // bucket: String,
     operator: Operator,
 }
 
@@ -41,6 +46,10 @@ impl R2Backend {
     //     Self::s3_builder(&self.account_id, &self.key_id, &self.secret, &self.bucket)
     // }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "We have to consume the R2D2 object anyway (for account id) so it's fine."
+    )]
     pub fn try_new(
         account_id: String,
         key_id: String,
@@ -53,9 +62,9 @@ impl R2Backend {
 
         Ok(Self {
             account_id,
-            key_id,
-            secret,
-            bucket,
+            // key_id,
+            // secret,
+            // bucket,
             operator: async_op,
         })
     }

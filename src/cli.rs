@@ -75,7 +75,11 @@ pub struct WipeOptions {
     pub yes: bool,
     pub bucket: Option<String>,
 
-    #[clap(long, help = "Also remove bucket contents (bucket must be empty before removing)", default_value = "true")]
+    #[clap(
+        long,
+        help = "Also remove bucket contents (bucket must be empty before removing)",
+        default_value = "true"
+    )]
     pub include_contents: bool,
 
     #[clap(long, help = "Also remove bucket itself", default_value = "true")]

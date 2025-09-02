@@ -71,7 +71,7 @@ impl ProgressState {
         result
     }
 
-    fn total(
+    const fn total(
         &mut self,
         total: u64,
     ) {
@@ -82,7 +82,7 @@ impl ProgressState {
         " ".repeat(self.max_char_length)
     }
 
-    fn inc(
+    const fn inc(
         &mut self,
         length: u64,
     ) -> u64 {
@@ -105,6 +105,7 @@ impl ProgressState {
         eprintln!("\r {} ✓{}", self.prefix(), self.padding());
     }
 
+    #[expect(dead_code, reason = "Might be useful")]
     fn print_with_prefix<S: AsRef<str>, W: Sized + Write>(
         &mut self,
         text: S,
@@ -162,7 +163,7 @@ pub enum ProgressType {
 }
 
 impl ProgressType {
-    fn get_state(&self) -> Option<MutexGuard<ProgressState>> {
+    fn get_state(&self) -> Option<MutexGuard<'_, ProgressState>> {
         match self {
             Self::Spinner(s) | Self::Counter(s) | Self::Bytes(s) => {
                 // Get a MutexGuard:

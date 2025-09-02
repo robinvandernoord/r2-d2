@@ -5,6 +5,7 @@ use crate::rustic_backends::r2_backend::R2Backend;
 use crate::rustic_progress::ProgressBar;
 use anyhow::{Context, anyhow, bail};
 use dotenvy::from_path_iter;
+use opendal::Operator;
 use pyo3::PyResult;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use reqwest::header::HeaderMap;
@@ -18,7 +19,6 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::BufReader;
 use std::ops::{BitAnd, BitOr};
 use std::path::{Path, PathBuf};
-use opendal::Operator;
 use url::Url;
 
 const CLOUDFLARE_API: &str = "https://api.cloudflare.com/client/v4/";
@@ -49,7 +49,6 @@ fn read_configfile(path: &PathBuf) -> Option<BTreeMap<String, String>> {
 
     Some(config)
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EmptyResponse {
@@ -367,7 +366,7 @@ macro_rules! api_to_python {
 
 // Config1 & Config2 -> overwrite existing
 impl BitAnd for R2D2Builder {
-    type Output = R2D2Builder;
+    type Output = Self;
 
     fn bitand(
         self,
@@ -385,7 +384,7 @@ impl BitAnd for R2D2Builder {
 
 // Config1 | Config2 -> fill missing
 impl BitOr for R2D2Builder {
-    type Output = R2D2Builder;
+    type Output = Self;
 
     fn bitor(
         self,
@@ -448,9 +447,9 @@ impl R2D2Builder {
         })
     }
 
-    fn is_complete(&self) -> bool {
+    const fn is_complete(&self) -> bool {
         self.account_id.is_some() && self.apikey.is_some()
-        // other fields are optionsal in R2D2
+        // other fields are optional in R2D2
     }
 }
 
@@ -732,14 +731,15 @@ impl R2D2 {
 
     pub async fn list(
         &self,
-        options: Option<ListOptions>,
+        _options: Option<ListOptions>,
     ) -> anyhow::Result<ApiResponse<BucketResultData>> {
-        // todo: cursor (for pagination), direction, name_contains, order, per_page, start_after
         let Some(request) = self.request_get("buckets") else {
             bail!("Request for '{}' could not be set up.", "usage");
         };
 
-        let options = options.unwrap_or_default();
+        // let options = options.unwrap_or_default();
+        // todo: use options for:
+        //  cursor (for pagination), direction, name_contains, order, per_page, start_after
 
         request.send_and_parse().await
     }
@@ -758,7 +758,7 @@ impl R2D2 {
     pub async fn delete_bucket(
         &self,
         bucket: &str,
-        options: Option<DeleteOptions>,
+        _options: Option<DeleteOptions>,
     ) -> anyhow::Result<ApiResponse<EmptyResponse>> {
         let endpoint = format!("buckets/{bucket}");
         let Some(request) = self.request_delete(&endpoint) else {
@@ -786,7 +786,7 @@ impl Display for R2D2 {
     ) -> std::fmt::Result {
         // convert to toml:
         let toml = toml::to_string(&self).unwrap_or_default();
-        write!(f, "{}", toml)
+        write!(f, "{toml}")
     }
 }
 

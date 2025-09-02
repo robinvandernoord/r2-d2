@@ -1,3 +1,5 @@
+#![expect(dead_code, reason = "This file is a work in progress")]
+
 use crate::cli::{InitOptions, Process};
 use crate::r2::{R2D2, ResticRepository};
 use rustic_core::{BackupOptions, ConfigOptions, KeyOptions, PathList, SnapshotOptions};

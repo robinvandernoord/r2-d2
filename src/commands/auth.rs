@@ -7,7 +7,7 @@ impl Process for AuthOptions {
     async fn process(self) -> anyhow::Result<i32> {
         let r2d2 = R2D2::guess().to_python_error("env")?;
 
-        if (self.show) {
+        if self.show {
             eprintln!("{:}", &r2d2);
         }
 
@@ -22,7 +22,7 @@ impl Process for AuthOptions {
         };
 
         if verification.ok() {
-            println!("Authorization ok: {}", obfuscated_id);
+            println!("Authorization ok: {obfuscated_id}");
             Ok(0)
         } else {
             println!(
