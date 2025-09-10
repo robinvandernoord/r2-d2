@@ -473,6 +473,8 @@ impl TryFrom<R2D2Builder> for R2D2 {
     }
 }
 
+const ERROCODE_BUCKET_NOT_EXIST: i32 = 10006;
+
 impl R2D2 {
     // low-level: config, setup stuff:
 
@@ -654,6 +656,20 @@ impl R2D2 {
         bucket: Option<String>,
     ) -> PyResult<BucketData> {
         api_to_python!(self, bucket, bucket)
+    }
+
+    pub async fn bucket_exists(
+        &self,
+        bucket: Option<String>,
+    ) -> anyhow::Result<bool> {
+        let info = self.bucket(bucket).await?;
+
+        // returns false if any error matches ERROCODE_BUCKET_NOT_EXIST:
+        Ok(info.errors.is_none_or(|errors| {
+            !errors
+                .iter()
+                .any(|error| error.code == ERROCODE_BUCKET_NOT_EXIST)
+        }))
     }
 
     pub async fn bucket_domains(

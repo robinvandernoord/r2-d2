@@ -67,7 +67,26 @@ pub struct OverviewOptions {}
 pub struct UploadOptions {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
-pub struct InitOptions {}
+pub struct InitOptions {
+    #[clap(
+        short,
+        long,
+        conflicts_with = "no",
+        help = "Automatically answer 'yes' to prompts"
+    )]
+    pub yes: bool,
+
+    #[clap(
+        short,
+        long,
+        conflicts_with = "yes",
+        help = "Automatically answer 'no' to prompts"
+    )]
+    pub no: bool,
+
+    #[clap(short, long, help = "R2 Bucket to use")]
+    pub bucket: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Parser)]
 pub struct WipeOptions {

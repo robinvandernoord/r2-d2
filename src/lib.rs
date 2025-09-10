@@ -4,9 +4,12 @@ use crate::commands::usage::usage;
 use crate::helpers::{UnwrapIntoPythonError, fmt_error, future_pyresult_to_py};
 use clap::{Command, CommandFactory, Parser};
 use clap_complete::{Generator, generate};
-use pyo3::exceptions::PyValueError;
+use futures::FutureExt;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::PyModule;
-use pyo3::{PyAny, PyResult, Python, prelude as pyo};
+use pyo3::{IntoPy, PyAny, PyObject, PyResult, Python, prelude as pyo};
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::process::exit;
 use std::{env, io};
 
@@ -20,6 +23,34 @@ pub mod r2_upload;
 
 pub mod rustic_backends;
 mod rustic_progress;
+
+pub fn future_into_py_catch_panic<
+    F: Future<Output = PyResult<T>> + Send + 'static,
+    T: Send + 'static + IntoPy<PyObject>,
+>(
+    py: Python<'_>,
+    fut: F,
+) -> PyResult<&PyAny> {
+    pyo3_asyncio::tokio::future_into_py(py, async move {
+        match AssertUnwindSafe(fut).catch_unwind().await {
+            Ok(py_res) => py_res,
+            Err(panic) => {
+                let msg = panic.downcast_ref::<&'static str>().map_or_else(
+                    || {
+                        panic
+                            .downcast_ref::<String>()
+                            .map_or("unknown panic", |s| s.as_str())
+                    },
+                    |s| *s,
+                );
+
+                Err(PyRuntimeError::new_err(format!(
+                    "rust future panicked: {msg}"
+                )))
+            },
+        }
+    })
+}
 
 pub fn print_completions<G: Generator>(
     generator: G,
@@ -63,10 +94,7 @@ pub fn error(py: Python<'_>) -> PyResult<&PyAny> {
 
 #[pyo::pyfunction]
 pub fn main_rs(py: Python<'_>) -> PyResult<&PyAny> {
-    pyo3_asyncio::tokio::future_into_py(py, async {
-        // result is Ok(exit code) or Err(python error)
-        async_main_rs().await.unwrap_or_raise()
-    })
+    future_into_py_catch_panic(py, async { async_main_rs().await.unwrap_or_raise() })
 }
 
 #[pyo::pymodule]
