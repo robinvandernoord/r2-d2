@@ -37,7 +37,7 @@ pub fn get_from_env(key: &str) -> anyhow::Result<String> {
     env::var(key).map_err(|_| anyhow!("Key {key} could not be found in your environment."))
 }
 
-fn read_configfile(path: &PathBuf) -> Option<BTreeMap<String, String>> {
+pub fn read_configfile(path: &PathBuf) -> Option<BTreeMap<String, String>> {
     let iter = from_path_iter(path).ok()?;
 
     let mut config: BTreeMap<String, String> = BTreeMap::new();
