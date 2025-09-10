@@ -2,16 +2,13 @@ use crate::cli::{Process, WipeOptions};
 use crate::r2::R2D2;
 use crate::r2_purge::empty_repo;
 use anyhow::bail;
+use cliclack::confirm;
 
 #[derive(Debug, Default)]
 pub struct DeleteOptions {}
 
 impl Process for WipeOptions {
     async fn process(self) -> anyhow::Result<i32> {
-        if !self.yes {
-            todo!("Still need to find a nice library to do confirmations etc.")
-        }
-
         let mut r2 = R2D2::guess()?;
 
         if self.bucket.is_some() {
@@ -21,6 +18,17 @@ impl Process for WipeOptions {
         let Some(bucket) = &r2.bucket else {
             bail!("No bucket configured to wipe!")
         };
+
+        if !self.yes {
+            let mut input_confirmation = confirm(format!(
+                "Are you sure you want to remove bucket '{}'? [yN]",
+                &bucket
+            ));
+
+            if !input_confirmation.interact().unwrap_or_default() {
+                return Ok(0);
+            }
+        }
 
         if self.include_contents {
             empty_repo(&r2).await?;
