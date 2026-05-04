@@ -1,0 +1,375 @@
+use crate::commands::init::prompt_bucket_name;
+use crate::helpers::mask_secret;
+use anyhow::anyhow;
+use dotenvy::from_path_iter;
+use resolve_path::PathResolveExt;
+use std::collections::BTreeMap;
+use std::env;
+use std::path::{Path, PathBuf};
+use tokio::fs;
+
+pub fn get_from_env(key: &str) -> anyhow::Result<String> {
+    env::var(key).map_err(|_| anyhow!("Key {key} could not be found in your environment."))
+}
+
+pub fn read_configfile(path: &PathBuf) -> Option<BTreeMap<String, String>> {
+    let iter = from_path_iter(path).ok()?;
+
+    let mut config: BTreeMap<String, String> = BTreeMap::new();
+
+    for item in iter {
+        let (key, value) = item.ok()?;
+        config.insert(key, value);
+    }
+
+    Some(config)
+}
+
+fn should_use_export(path: &Path) -> bool {
+    path.file_name().unwrap_or_default() == ".r2"
+}
+
+// Config destinations for account/bucket files
+#[derive(Clone, Copy)]
+enum ConfigLocation {
+    HomeConfigR2, // ~/.config/.r2
+    HomeR2,       // ~/.r2
+    CwdR2,        // ./.r2
+    CwdEnv,       // ./.env
+}
+
+impl ConfigLocation {
+    const fn value(self) -> &'static str {
+        match self {
+            Self::HomeConfigR2 => "home_config_r2",
+            Self::HomeR2 => "home_r2",
+            Self::CwdR2 => "cwd_r2",
+            Self::CwdEnv => "cwd_env",
+        }
+    }
+    const fn label(self) -> &'static str {
+        match self {
+            Self::HomeConfigR2 => "~/.config/.r2",
+            Self::HomeR2 => "~/.r2",
+            Self::CwdR2 => "./.r2",
+            Self::CwdEnv => "./.env",
+        }
+    }
+    const fn hint(self) -> &'static str {
+        match self {
+            Self::HomeConfigR2 => "config for all projects, recommended for account info",
+            Self::HomeR2 => "user-level config",
+            Self::CwdR2 => "project-level config, recommended for bucket info",
+            Self::CwdEnv => ".env format (no export)",
+        }
+    }
+    fn to_pathbuf(self) -> PathBuf {
+        Path::new(self.label()).resolve().into()
+    }
+
+    const fn as_clicklack(&self) -> (&str, &str, &str) {
+        (self.value(), self.label(), self.hint())
+    }
+
+    fn from_value(val: &str) -> Self {
+        match val {
+            "home_config_r2" => Self::HomeConfigR2,
+            "home_r2" => Self::HomeR2,
+            "cwd_r2" => Self::CwdR2,
+            "cwd_env" => Self::CwdEnv,
+            _ => {
+                eprintln!("Unexpected value '{val}', returning default (~/.config/.r2) instead.");
+                Self::HomeConfigR2
+            },
+        }
+    }
+}
+
+// Helper: quote only when needed; prefer double quotes; escape backslash, double quote, dollar
+fn format_line(
+    key: &str,
+    value: &str,
+    line_use_export: bool,
+) -> String {
+    let needs_quotes =
+        value.chars().any(char::is_whitespace) || value.contains(['#', '"', '\'', '$', '\\', '=']);
+    let val = if needs_quotes {
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$");
+        format!("\"{escaped}\"")
+    } else {
+        value.to_string()
+    };
+    if line_use_export {
+        format!("export {key}={val}")
+    } else {
+        format!("{key}={val}")
+    }
+}
+
+pub async fn write_env_file(
+    path: &Path,
+    vars: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    // Read existing file (preserve comments and unknown lines)
+    let existing_text = fs::read_to_string(path).await.unwrap_or_default();
+    let mut lines: Vec<String> = if existing_text.is_empty() {
+        Vec::new()
+    } else {
+        existing_text.lines().map(ToString::to_string).collect()
+    };
+
+    // Decide export style:
+    // - If file already contains any `export KEY=...`, keep using export
+    // - Otherwise, fall back to filename heuristic
+    let file_uses_export = lines.iter().any(|l| {
+        let t = l.trim();
+        !t.starts_with('#') && t.starts_with("export ") && t.contains('=')
+    });
+    let use_export = if lines.is_empty() {
+        should_use_export(path)
+    } else {
+        file_uses_export
+    };
+
+    // Build index of existing keys -> (line_idx, had_export_on_that_line)
+    let mut key_location: std::collections::HashMap<String, (usize, bool)> =
+        std::collections::HashMap::new();
+    for (idx, line) in lines.iter().enumerate() {
+        let trimmed_line = line.trim_start();
+        if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
+            continue;
+        }
+
+        let (had_export, rest) = trimmed_line
+            .strip_prefix("export ")
+            .map_or((false, trimmed_line), |rest| (true, rest));
+
+        if let Some(eq) = rest.find('=') {
+            let key = rest[..eq].trim().to_string();
+            if !key.is_empty() {
+                key_location.insert(key, (idx, had_export));
+            }
+        }
+    }
+
+    // Header management: ensure "Generated by R2-D2 interactive init" appears at most once.
+    // - If file is empty, start with the header.
+    // - If file is non-empty and header missing, append it at the end to avoid disturbing existing comments.
+    let header = "# Generated by R2-D2 interactive init";
+    let has_header = lines.iter().any(|l| l.trim() == header);
+    if lines.is_empty() {
+        lines.push(header.to_string());
+    } else if !has_header {
+        // Ensure previous content ends with a newline visually when re-joined
+        if let Some(last) = lines.last()
+            && !last.is_empty()
+        {
+            lines.push(String::new());
+        }
+        lines.push(header.to_string());
+    }
+
+    // Apply updates: replace in place when key exists; otherwise append
+    for (key, value) in vars {
+        if let Some((idx, had_export)) = key_location.get(key).copied() {
+            // Respect the original line's export usage
+            lines[idx] = format_line(key, value, had_export);
+        } else {
+            // Append using the file's export style
+            lines.push(format_line(key, value, use_export));
+        }
+    }
+
+    // Join and write back
+    let mut out = String::new();
+    for line in &lines {
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    fs::write(path, out).await?;
+    Ok(())
+}
+
+pub async fn prompt_account_config() -> anyhow::Result<()> {
+    // Choose where to store account config
+    let account_choices = [
+        ConfigLocation::HomeConfigR2,
+        ConfigLocation::HomeR2,
+        ConfigLocation::CwdR2,
+        ConfigLocation::CwdEnv,
+    ];
+    let account_items: Vec<_> = account_choices
+        .iter()
+        .map(ConfigLocation::as_clicklack)
+        .collect();
+
+    let selected_account_value =
+        cliclack::Select::new("Where would you like to store your ACCOUNT config?")
+            .items(&account_items)
+            .initial_value(ConfigLocation::HomeConfigR2.value())
+            .interact()?;
+
+    let account_loc = ConfigLocation::from_value(selected_account_value);
+    let account_path = account_loc.to_pathbuf();
+
+    // Load existing for defaults
+    let existing = read_configfile(&account_path).unwrap_or_default();
+
+    // Collect fields
+    let mut account_vars = BTreeMap::new();
+
+    {
+        let mut input = cliclack::Input::new(
+            "Cloudflare R2 Account ID (Dashboard: R2 -> Overview -> Account ID):",
+        );
+        if let Some(v) = existing.get("R2_ACCOUNT_ID") {
+            input = input.default_input(v);
+        } else {
+            input = input.placeholder("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+        }
+        let val: String = input.interact()?;
+        account_vars.insert("R2_ACCOUNT_ID".to_string(), val);
+    }
+
+    {
+        let masked_default = existing
+            .get("R2_API_TOKEN")
+            .map(mask_secret)
+            .unwrap_or_default();
+
+        let mut input = cliclack::input(
+            "Cloudflare API Token (Profile -> API Tokens; leave as masked or empty to keep existing):",
+        );
+        if masked_default.is_empty() {
+            input = input.placeholder("your-api-token");
+        } else {
+            input = input.default_input(&masked_default);
+        }
+        let entered: String = input.interact()?;
+
+        let val: String =
+            if !masked_default.is_empty() && (entered.is_empty() || entered == masked_default) {
+                existing.get("R2_API_TOKEN").cloned().unwrap_or_default()
+            } else {
+                entered
+            };
+        account_vars.insert("R2_API_TOKEN".to_string(), val);
+    }
+
+    // Save once
+    write_env_file(&account_path, &account_vars).await?;
+    Ok(())
+}
+
+pub async fn prompt_bucket_config(cli_bucket: Option<String>) -> anyhow::Result<String> {
+    // Choose where to store bucket config
+    let bucket_choices = [
+        ConfigLocation::CwdR2,
+        ConfigLocation::HomeR2,
+        ConfigLocation::HomeConfigR2,
+        ConfigLocation::CwdEnv,
+    ];
+
+    let bucket_items: Vec<_> = bucket_choices
+        .iter()
+        .map(ConfigLocation::as_clicklack)
+        .collect();
+
+    let selected_bucket_value =
+        cliclack::select("Where would you like to store your BUCKET config?")
+            .items(&bucket_items)
+            .initial_value(ConfigLocation::CwdR2.value())
+            .interact()?;
+
+    let bucket_loc = ConfigLocation::from_value(selected_bucket_value);
+    let bucket_path = bucket_loc.to_pathbuf();
+
+    // Load existing for defaults
+    let existing = read_configfile(&bucket_path).unwrap_or_default();
+
+    // Ask BUCKET NAME exactly once (CLI overrides)
+    let chosen_bucket = if let Some(bucket) = cli_bucket {
+        bucket
+    } else {
+        prompt_bucket_name(existing.get("R2_BUCKET").map(String::as_str))?
+    };
+
+    // Keys missing?
+    let keys_missing = existing
+        .get("R2_ACCESS_KEY_ID")
+        .is_none_or(String::is_empty)
+        || existing
+            .get("R2_SECRET_ACCESS_KEY")
+            .is_none_or(String::is_empty);
+
+    if keys_missing {
+        // todo: check if keys can be automatically made by first checking permissions at ` /user/tokens/permission_groups`
+        // fixme: using only bucket-level access should also work (allow ACCOUNT none) albeit with less automatic functionality
+
+        let want_auto_tokens = cliclack::confirm(
+            "No R2 access keys found. Create bucket-scoped access keys automatically using your API token?",
+        )
+            .initial_value(true)
+            .interact()?;
+        if want_auto_tokens {
+            // fixme in progress in `rs-cloudflare-api`
+            todo!("automatically create bucket-scoped access keys using the provided API token");
+        }
+    }
+
+    // Collect keys (with defaults)
+    let mut bucket_vars = BTreeMap::new();
+
+    {
+        let mut input = cliclack::Input::new(
+            "R2 Access Key ID (Dashboard: R2 -> S3 API -> Create API Token -> Access Key ID):",
+        );
+        if let Some(v) = existing.get("R2_ACCESS_KEY_ID") {
+            input = input.default_input(v);
+        } else {
+            input = input.placeholder("your-access-key-id");
+        }
+        let val: String = input.interact()?;
+        bucket_vars.insert("R2_ACCESS_KEY_ID".to_string(), val);
+    }
+
+    {
+        let masked_default = existing
+            .get("R2_SECRET_ACCESS_KEY")
+            .map(mask_secret)
+            .unwrap_or_default();
+
+        let mut input =
+            cliclack::Input::new("R2 Secret Access Key (shown once when creating the API token):");
+
+        if masked_default.is_empty() {
+            input = input.placeholder("your-secret-access-key");
+        } else {
+            input = input.default_input(&masked_default);
+        }
+        let entered: String = input.interact()?;
+
+        let val: String =
+            if !masked_default.is_empty() && (entered.is_empty() || entered == masked_default) {
+                existing
+                    .get("R2_SECRET_ACCESS_KEY")
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                entered
+            };
+        bucket_vars.insert("R2_SECRET_ACCESS_KEY".to_string(), val);
+    }
+
+    // Bucket last
+    bucket_vars.insert("R2_BUCKET".to_string(), chosen_bucket.clone());
+
+    // Save once (writer preserves comments and appends new keys; order is enforced by its logic)
+    write_env_file(&bucket_path, &bucket_vars).await?;
+
+    Ok(chosen_bucket)
+}

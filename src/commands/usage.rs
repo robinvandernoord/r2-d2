@@ -1,4 +1,4 @@
-use crate::commands::list::ListOptions;
+use crate::commands::list::ListBucketOptions;
 use byte_unit::{Byte, UnitType};
 use futures::future;
 use owo_colors::OwoColorize;
@@ -114,7 +114,7 @@ pub async fn gather_usage_info(r2: &R2D2) -> anyhow::Result<Vec<UsageTable>> {
     // 1. list buckets
     // 2. gather usage data
     // 3. return table (str)
-    let buckets = r2.list_py(Some(ListOptions::default())).await?;
+    let buckets = r2.list_py(Some(ListBucketOptions::default())).await?;
 
     let bucket_names: Vec<String> = buckets.into_iter().map(|bucket| bucket.name).collect();
 

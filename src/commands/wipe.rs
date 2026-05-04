@@ -6,7 +6,7 @@ use cliclack;
 use std::fmt::Display;
 
 #[derive(Debug, Default)]
-pub struct DeleteOptions {}
+pub struct DeleteBucketOptions {}
 
 pub fn confirm<S: Display>(
     prompt: S,

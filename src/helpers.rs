@@ -147,3 +147,49 @@ impl<T> UnwrapIntoPythonError<T> for anyhow::Result<T> {
         self.map_err(|e| PyRuntimeError::new_err(fmt_error(&e)))
     }
 }
+
+
+#[derive(Clone, Copy)]
+pub struct MaskOptions {
+    show_head: usize,
+    show_tail: usize,
+    mask: &'static str,
+}
+
+impl Default for MaskOptions {
+    fn default() -> Self {
+        Self {
+            show_head: 4,
+            show_tail: 4,
+            mask: "***",
+        }
+    }
+}
+
+pub fn mask_secret_with_options<S: AsRef<str>>(
+    existing: S,
+    opts: MaskOptions,
+) -> String {
+    let existing = existing.as_ref();
+    if existing.is_empty() {
+        return String::new();
+    }
+    let len = existing.chars().count();
+    if len <= opts.show_head + opts.show_tail {
+        return opts.mask.to_string();
+    }
+    let head: String = existing.chars().take(opts.show_head).collect();
+    let tail: String = existing
+        .chars()
+        .rev()
+        .take(opts.show_tail)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}{}{}", head, opts.mask, tail)
+}
+
+pub fn mask_secret<S: AsRef<str>>(existing: S)->String {
+    mask_secret_with_options(existing, Default::default())
+}

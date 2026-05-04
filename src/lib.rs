@@ -23,6 +23,7 @@ pub mod r2_upload;
 
 pub mod rustic_backends;
 mod rustic_progress;
+mod config;
 
 pub fn future_into_py_catch_panic<
     F: Future<Output = PyResult<T>> + Send + 'static,

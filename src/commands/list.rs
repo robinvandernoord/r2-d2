@@ -1,7 +1,7 @@
 use crate::r2::{Direction, QueryString, to_query_part};
 
 #[derive(Debug, Default)]
-pub struct ListOptions {
+pub struct ListBucketOptions {
     cursor: Option<String>,
     direction: Option<Direction>,
     order: Option<String>,
@@ -9,7 +9,7 @@ pub struct ListOptions {
     start_after: Option<String>,
 }
 
-impl QueryString for ListOptions {
+impl QueryString for ListBucketOptions {
     fn to_query(&self) -> String {
         let mut parts = vec![];
 

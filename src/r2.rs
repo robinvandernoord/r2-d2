@@ -1,5 +1,7 @@
-use crate::commands::list::ListOptions;
-use crate::commands::wipe::DeleteOptions;
+use crate::commands::init::{CreateBucketBody, CreateBucketOptions};
+use crate::commands::list::ListBucketOptions;
+use crate::commands::wipe::DeleteBucketOptions;
+use crate::config::{get_from_env, read_configfile};
 use crate::helpers::IntoPythonError;
 use crate::rustic_backends::r2_backend::R2Backend;
 use crate::rustic_progress::ProgressBar;
@@ -13,7 +15,7 @@ use reqwest::{Client, RequestBuilder};
 use resolve_path::PathResolveExt;
 use rustic_core::{Repository, RepositoryOptions};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::BufReader;
@@ -31,23 +33,6 @@ fn get_from_config(
         || Err(anyhow!("Key {key} could not be found in the config.")),
         |value| Ok(value.clone()),
     )
-}
-
-pub fn get_from_env(key: &str) -> anyhow::Result<String> {
-    env::var(key).map_err(|_| anyhow!("Key {key} could not be found in your environment."))
-}
-
-pub fn read_configfile(path: &PathBuf) -> Option<BTreeMap<String, String>> {
-    let iter = from_path_iter(path).ok()?;
-
-    let mut config: BTreeMap<String, String> = BTreeMap::new();
-
-    for item in iter {
-        let (key, value) = item.ok()?;
-        config.insert(key, value);
-    }
-
-    Some(config)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -319,6 +304,7 @@ pub struct R2D2Builder {
     aws_access_key_id: Option<String>,
     aws_secret_access_key: Option<String>,
     bucket: Option<String>,
+    repo_password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -328,7 +314,7 @@ pub struct R2D2 {
     aws_access_key_id: Option<String>,
     aws_secret_access_key: Option<String>,
     pub bucket: Option<String>,
-    // todo: repo password
+    repo_password: Option<String>,
 }
 
 macro_rules! bucket_request {
@@ -378,6 +364,7 @@ impl BitAnd for R2D2Builder {
             aws_access_key_id: rhs.aws_access_key_id.or(self.aws_access_key_id),
             aws_secret_access_key: rhs.aws_secret_access_key.or(self.aws_secret_access_key),
             bucket: rhs.bucket.or(self.bucket),
+            repo_password: rhs.repo_password.or(self.repo_password),
         }
     }
 }
@@ -396,6 +383,7 @@ impl BitOr for R2D2Builder {
             aws_access_key_id: self.aws_access_key_id.or(rhs.aws_access_key_id),
             aws_secret_access_key: self.aws_secret_access_key.or(rhs.aws_secret_access_key),
             bucket: self.bucket.or(rhs.bucket),
+            repo_password: self.repo_password.or(rhs.repo_password),
         }
     }
 }
@@ -409,10 +397,11 @@ impl R2D2Builder {
         if let Some(config) = read_configfile(&abs_path) {
             Ok(Self {
                 account_id: get_from_config(&config, "R2_ACCOUNT_ID").ok(),
-                apikey: get_from_config(&config, "R2_API_KEY").ok(),
+                apikey: get_from_config(&config, "R2_API_TOKEN").ok(),
                 bucket: get_from_config(&config, "R2_BUCKET").ok(),
                 aws_access_key_id: get_from_config(&config, "R2_ACCESS_KEY_ID").ok(),
                 aws_secret_access_key: get_from_config(&config, "R2_SECRET_ACCESS_KEY").ok(),
+                repo_password: get_from_config(&config, "R2_REPO_PASSWORD").ok(),
             })
         } else {
             bail!("Invalid config file {}", ".r2")
@@ -440,16 +429,21 @@ impl R2D2Builder {
     pub fn from_env() -> anyhow::Result<Self> {
         Ok(Self {
             account_id: get_from_env("R2_ACCOUNT_ID").ok(),
-            apikey: get_from_env("R2_API_KEY").ok(),
+            apikey: get_from_env("R2_API_TOKEN").ok(),
             bucket: get_from_env("R2_BUCKET").ok(),
             aws_access_key_id: get_from_env("R2_ACCESS_KEY_ID").ok(),
             aws_secret_access_key: get_from_env("R2_SECRET_ACCESS_KEY").ok(),
+            repo_password: get_from_env("R2_REPO_PASSWORD").ok(),
         })
     }
 
     const fn is_complete(&self) -> bool {
-        self.account_id.is_some() && self.apikey.is_some()
-        // other fields are optional in R2D2
+        self.account_id.is_some()
+            && self.apikey.is_some()
+            && self.aws_access_key_id.is_some()
+            && self.aws_secret_access_key.is_some()
+            && self.bucket.is_some()
+            && self.repo_password.is_some()
     }
 }
 
@@ -469,6 +463,7 @@ impl TryFrom<R2D2Builder> for R2D2 {
             aws_access_key_id: value.aws_access_key_id,
             aws_secret_access_key: value.aws_secret_access_key,
             bucket: value.bucket,
+            repo_password: value.repo_password,
         })
     }
 }
@@ -508,6 +503,10 @@ impl R2D2 {
         Ok(bucket.to_string())
     }
 
+    pub fn bucket_or_default(&self) -> String {
+        self.bucket.clone().unwrap_or_default()
+    }
+
     // /// `SharedCredentialsProvider` eats self so it needs to be owned.
     // pub fn into_s3(self) -> anyhow::Result<S3Client> {
     //     let url = self.endpoint_url();
@@ -545,7 +544,11 @@ impl R2D2 {
     }
 
     pub fn into_rustic(self) -> anyhow::Result<ResticRepository> {
-        let repo_opts = RepositoryOptions::default().password("test");
+        let Some(password) = self.repo_password.clone() else {
+            bail!("Cannot start Rustic without a repo password.")
+        };
+
+        let repo_opts = RepositoryOptions::default().password(password);
 
         let backend = self.into_opendal_backend()?;
         let backends = backend.into_backends();
@@ -584,6 +587,22 @@ impl R2D2 {
         let client = Client::new();
         let url = self.build_url(endpoint)?.to_string();
         let request = client.get(url);
+
+        self.headers().map(|headers| request.headers(headers))
+    }
+
+    pub fn request_post<T: Serialize + ?Sized>(
+        &self,
+        endpoint: &str,
+        json: Option<&T>,
+    ) -> Option<RequestBuilder> {
+        let client = Client::new();
+        let url = self.build_url(endpoint)?.to_string();
+        let mut request = client.post(url);
+
+        if let Some(json_data) = json {
+            request = request.json(json_data)
+        }
 
         self.headers().map(|headers| request.headers(headers))
     }
@@ -747,7 +766,7 @@ impl R2D2 {
 
     pub async fn list(
         &self,
-        _options: Option<ListOptions>,
+        _options: Option<ListBucketOptions>,
     ) -> anyhow::Result<ApiResponse<BucketResultData>> {
         let Some(request) = self.request_get("buckets") else {
             bail!("Request for '{}' could not be set up.", "usage");
@@ -763,7 +782,7 @@ impl R2D2 {
     /// List buckets
     pub async fn list_py(
         &self,
-        options: Option<ListOptions>,
+        options: Option<ListBucketOptions>,
     ) -> PyResult<Vec<BucketData>> {
         // todo: cursor (for pagination), direction, name_contains, order, per_page, start_after
         let data = api_to_python!(self, list, options)?;
@@ -771,10 +790,40 @@ impl R2D2 {
         Ok(data.buckets)
     }
 
+    pub async fn create_bucket(
+        &self,
+        bucket: &str,
+        options: Option<CreateBucketOptions>,
+    ) -> anyhow::Result<ApiResponse<BucketData>> {
+        let options = options.unwrap_or_default();
+
+        let body = options.body.unwrap_or_else(|| CreateBucketBody {
+            name: bucket.to_owned(),
+        });
+
+        let Some(mut request) = self.request_post("buckets", Some(&body)) else {
+            bail!("Request for '{}' could not be set up.", "create bucket");
+        };
+
+        if let Some(headers) = options.headers {
+            request = request.headers(headers.into())
+        }
+
+        request.send_and_parse().await
+    }
+
+    pub async fn create_bucket_py(
+        &self,
+        bucket: &str,
+        options: Option<CreateBucketOptions>,
+    ) -> PyResult<BucketData> {
+        api_to_python!(self, create_bucket, bucket, options)
+    }
+
     pub async fn delete_bucket(
         &self,
         bucket: &str,
-        _options: Option<DeleteOptions>,
+        _options: Option<DeleteBucketOptions>,
     ) -> anyhow::Result<ApiResponse<EmptyResponse>> {
         let endpoint = format!("buckets/{bucket}");
         let Some(request) = self.request_delete(&endpoint) else {
@@ -787,11 +836,9 @@ impl R2D2 {
     pub async fn delete_bucket_py(
         &self,
         bucket: &str,
-        options: Option<DeleteOptions>,
+        options: Option<DeleteBucketOptions>,
     ) -> PyResult<EmptyResponse> {
-        let data = api_to_python!(self, delete_bucket, bucket, options)?;
-
-        Ok(data)
+        api_to_python!(self, delete_bucket, bucket, options)
     }
 }
 
