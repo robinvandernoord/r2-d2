@@ -445,6 +445,29 @@ impl R2D2Builder {
             && self.bucket.is_some()
             && self.repo_password.is_some()
     }
+
+    fn missing(&self) -> Vec<String> {
+        let mut result = Vec::new();
+        if self.account_id.is_none() {
+            result.push("R2_ACCOUNT_ID".to_string());
+        }
+        if self.apikey.is_none() {
+            result.push("R2_API_TOKEN".to_string());
+        }
+        if self.aws_access_key_id.is_none() {
+            result.push("R2_ACCESS_KEY_ID".to_string());
+        }
+        if self.aws_secret_access_key.is_none() {
+            result.push("R2_SECRET_ACCESS_KEY".to_string());
+        }
+        if self.bucket.is_none() {
+            result.push("R2_BUCKET".to_string());
+        }
+        if self.repo_password.is_none() {
+            result.push("R2_REPO_PASSWORD".to_string());
+        }
+        result
+    }
 }
 
 impl TryFrom<R2D2Builder> for R2D2 {
@@ -488,7 +511,11 @@ impl R2D2 {
         if settings_combined.is_complete() {
             settings_combined.try_into()
         } else {
-            bail!("No complete config could be found (tried .r2, .env, environment variables)")
+            let missing = settings_combined.missing();
+            let missing = missing.join(", ");
+            bail!(
+                "No complete config could be found (tried .r2, .env, environment variables)\nMissing: {missing}"
+            )
         }
     }
 
