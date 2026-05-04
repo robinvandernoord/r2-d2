@@ -148,7 +148,6 @@ impl<T> UnwrapIntoPythonError<T> for anyhow::Result<T> {
     }
 }
 
-
 #[derive(Clone, Copy)]
 pub struct MaskOptions {
     show_head: usize,
@@ -190,6 +189,6 @@ pub fn mask_secret_with_options<S: AsRef<str>>(
     format!("{}{}{}", head, opts.mask, tail)
 }
 
-pub fn mask_secret<S: AsRef<str>>(existing: S)->String {
+pub fn mask_secret<S: AsRef<str>>(existing: S) -> String {
     mask_secret_with_options(existing, Default::default())
 }

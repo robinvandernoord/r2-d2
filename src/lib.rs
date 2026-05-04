@@ -21,9 +21,9 @@ pub mod r2_purge;
 
 pub mod r2_upload;
 
+mod config;
 pub mod rustic_backends;
 mod rustic_progress;
-mod config;
 
 pub fn future_into_py_catch_panic<
     F: Future<Output = PyResult<T>> + Send + 'static,

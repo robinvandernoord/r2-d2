@@ -6,7 +6,6 @@ use crate::helpers::IntoPythonError;
 use crate::rustic_backends::r2_backend::R2Backend;
 use crate::rustic_progress::ProgressBar;
 use anyhow::{Context, anyhow, bail};
-use dotenvy::from_path_iter;
 use opendal::Operator;
 use pyo3::PyResult;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -15,12 +14,11 @@ use reqwest::{Client, RequestBuilder};
 use resolve_path::PathResolveExt;
 use rustic_core::{Repository, RepositoryOptions};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use std::env;
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::BufReader;
 use std::ops::{BitAnd, BitOr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use url::Url;
 
 const CLOUDFLARE_API: &str = "https://api.cloudflare.com/client/v4/";
@@ -305,6 +303,8 @@ pub struct R2D2Builder {
     aws_secret_access_key: Option<String>,
     bucket: Option<String>,
     repo_password: Option<String>,
+    endpoint: Option<String>,
+    s3_region: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -315,6 +315,8 @@ pub struct R2D2 {
     aws_secret_access_key: Option<String>,
     pub bucket: Option<String>,
     repo_password: Option<String>,
+    endpoint_url: String,
+    s3_region: Option<String>,
 }
 
 macro_rules! bucket_request {
@@ -365,6 +367,8 @@ impl BitAnd for R2D2Builder {
             aws_secret_access_key: rhs.aws_secret_access_key.or(self.aws_secret_access_key),
             bucket: rhs.bucket.or(self.bucket),
             repo_password: rhs.repo_password.or(self.repo_password),
+            endpoint: rhs.endpoint.or(self.endpoint),
+            s3_region: rhs.s3_region.or(self.s3_region),
         }
     }
 }
@@ -384,6 +388,8 @@ impl BitOr for R2D2Builder {
             aws_secret_access_key: self.aws_secret_access_key.or(rhs.aws_secret_access_key),
             bucket: self.bucket.or(rhs.bucket),
             repo_password: self.repo_password.or(rhs.repo_password),
+            endpoint: self.endpoint.or(rhs.endpoint),
+            s3_region: self.s3_region.or(rhs.s3_region),
         }
     }
 }
@@ -402,6 +408,8 @@ impl R2D2Builder {
                 aws_access_key_id: get_from_config(&config, "R2_ACCESS_KEY_ID").ok(),
                 aws_secret_access_key: get_from_config(&config, "R2_SECRET_ACCESS_KEY").ok(),
                 repo_password: get_from_config(&config, "R2_REPO_PASSWORD").ok(),
+                endpoint: get_from_config(&config, "R2_ENDPOINT").ok(),
+                s3_region: get_from_config(&config, "R2_REGION").ok(),
             })
         } else {
             bail!("Invalid config file {}", ".r2")
@@ -434,16 +442,20 @@ impl R2D2Builder {
             aws_access_key_id: get_from_env("R2_ACCESS_KEY_ID").ok(),
             aws_secret_access_key: get_from_env("R2_SECRET_ACCESS_KEY").ok(),
             repo_password: get_from_env("R2_REPO_PASSWORD").ok(),
+            endpoint: get_from_env("R2_ENDPOINT").ok(),
+            s3_region: get_from_env("R2_REGION").ok(),
         })
     }
 
     const fn is_complete(&self) -> bool {
+        // todo: for some operations, not all of these are needed.
         self.account_id.is_some()
             && self.apikey.is_some()
             && self.aws_access_key_id.is_some()
             && self.aws_secret_access_key.is_some()
             && self.bucket.is_some()
             && self.repo_password.is_some()
+        // endpoint is optional
     }
 
     fn missing(&self) -> Vec<String> {
@@ -470,6 +482,8 @@ impl R2D2Builder {
     }
 }
 
+const R2_BASE_URL: &'static str = "r2.cloudflarestorage.com";
+
 impl TryFrom<R2D2Builder> for R2D2 {
     type Error = anyhow::Error;
 
@@ -478,15 +492,25 @@ impl TryFrom<R2D2Builder> for R2D2 {
             bail!("Incomplete config");
         }
 
+        let account_id = value
+            .account_id
+            .expect("Should be filled if value.is_complete");
+
+        let endpoint_url = if let Some(endpoint) = value.endpoint {
+            endpoint
+        } else {
+            format!("https://{}.{}", &account_id, R2_BASE_URL)
+        };
+
         Ok(Self {
-            account_id: value
-                .account_id
-                .expect("Should be filled if value.is_complete"),
+            account_id,
             apikey: value.apikey.expect("Should be filled if value.is_complete"),
             aws_access_key_id: value.aws_access_key_id,
             aws_secret_access_key: value.aws_secret_access_key,
             bucket: value.bucket,
             repo_password: value.repo_password,
+            endpoint_url,
+            s3_region: value.s3_region,
         })
     }
 }
@@ -555,12 +579,17 @@ impl R2D2 {
     //     Ok(S3Client::new(&shared_config))
     // }
 
+    pub fn is_cloudflare(&self) -> bool {
+        self.endpoint_url.ends_with(R2_BASE_URL)
+    }
+
     pub fn into_opendal_backend(self) -> anyhow::Result<R2Backend> {
         R2Backend::try_new(
-            self.account_id,
             self.aws_access_key_id.unwrap_or_default(),
             self.aws_secret_access_key.unwrap_or_default(),
             self.bucket.unwrap_or_default(),
+            self.endpoint_url,
+            self.s3_region.as_deref(),
         )
     }
 
@@ -586,9 +615,9 @@ impl R2D2 {
         Ok(repo)
     }
 
-    pub fn endpoint_url(&self) -> String {
-        format!("https://{}.r2.cloudflarestorage.com", &self.account_id,)
-    }
+    // pub fn endpoint_url(&self) -> String {
+    //     format!("https://{}.r2.cloudflarestorage.com", &self.account_id,)
+    // }
 
     pub fn build_url(
         &self,

@@ -2,19 +2,13 @@
 
 use crate::cli::{InitOptions, Process};
 use crate::commands::wipe::do_confirm_with_initial;
+use crate::config::{prompt_account_config, prompt_bucket_config};
 use crate::r2::{R2D2, ResticRepository};
 use anyhow::bail;
-use resolve_path::PathResolveExt;
-use rustic_core::{BackupOptions, ConfigOptions, KeyOptions, PathList, SnapshotOptions};
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use rustic_core::{BackupOptions, ConfigOptions, KeyOptions, PathList, SnapshotOptions};
 use serde::Serialize;
 use serde_json::Value;
-use tokio::fs;
-use crate::config::{prompt_account_config, prompt_bucket_config};
-use crate::helpers::mask_secret;
-
 
 /// Convert any `Serialize` struct into a `HeaderMap`
 /// using Serde's default serialization rules.
@@ -49,7 +43,6 @@ pub enum BucketJurisdiction {
     Fedramp,
 }
 
-
 #[derive(Debug, Default, Serialize)]
 pub struct CreateBucketHeaders {
     #[serde(rename = "cf-r2-jurisdiction")]
@@ -58,9 +51,8 @@ pub struct CreateBucketHeaders {
 
 #[derive(Debug, Default, Serialize)]
 pub struct CreateBucketBody {
-    pub name: String
-    // locationHint
-    // storageClass
+    pub name: String, // locationHint
+                      // storageClass
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -152,7 +144,7 @@ pub fn prompt_bucket_name(default: Option<&str>) -> anyhow::Result<String> {
     let mut input = cliclack::Input::new(
         "Bucket name (Cloudflare R2 -> Buckets -> Name; it doesn't have to exist yet):",
     )
-        .validate_interactively(validate_bucket_name);
+    .validate_interactively(validate_bucket_name);
     if let Some(d) = default {
         input = input.default_input(d);
     } else {
@@ -161,7 +153,6 @@ pub fn prompt_bucket_name(default: Option<&str>) -> anyhow::Result<String> {
     let value: String = input.interact()?;
     Ok(value)
 }
-
 
 async fn ensure_bucket_ready(
     r2: &R2D2,

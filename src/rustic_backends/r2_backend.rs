@@ -19,25 +19,29 @@ use typed_path::UnixPathBuf;
 /// Uses opendal async instead of blocking
 #[derive(Clone, Debug)]
 pub struct R2Backend {
-    account_id: String,
+    // account_id: String,
     // key_id: String,
     // secret: String,
     // bucket: String,
     operator: Operator,
+    endpoint_url: String,
 }
 
 impl R2Backend {
     fn s3_builder(
-        account_id: &str,
         key_id: &str,
         secret: &str,
         bucket: &str,
+        endpoint_url: &str,
+        s3_region: Option<&str>,
     ) -> S3Builder {
+        let region = s3_region.unwrap_or("auto");
+
         S3Builder::default()
             // set the storage bucket for OpenDAL
             .root("/")
-            .region("auto")
-            .endpoint(&format!("https://{account_id}.r2.cloudflarestorage.com"))
+            .region(region)
+            .endpoint(endpoint_url)
             .access_key_id(key_id)
             .secret_access_key(secret)
             .bucket(bucket)
@@ -51,21 +55,23 @@ impl R2Backend {
         reason = "We have to consume the R2D2 object anyway (for account id) so it's fine."
     )]
     pub fn try_new(
-        account_id: String,
         key_id: String,
         secret: String,
         bucket: String,
+        endpoint_url: String,
+        s3_region: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let builder = Self::s3_builder(&account_id, &key_id, &secret, &bucket);
+        let builder = Self::s3_builder(&key_id, &secret, &bucket, &endpoint_url, s3_region);
 
         let async_op: Operator = Operator::new(builder)?.finish();
 
         Ok(Self {
-            account_id,
+            // account_id,
             // key_id,
             // secret,
             // bucket,
             operator: async_op,
+            endpoint_url,
         })
     }
 
@@ -285,7 +291,7 @@ macro_rules! block_on_in_place {
 
 impl ReadBackend for R2Backend {
     fn location(&self) -> String {
-        format!("https://{}.r2.cloudflarestorage.com", self.account_id)
+        self.endpoint_url.to_owned()
     }
 
     // Forward to async functions using existing runtime

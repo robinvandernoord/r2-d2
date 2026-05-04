@@ -55,7 +55,7 @@ impl Process for WipeOptions {
                 empty_repo(&r2).await?;
             }
 
-            if self.include_bucket {
+            if self.include_bucket && r2.is_cloudflare() {
                 r2.delete_bucket_py(bucket, None).await?;
 
                 eprintln!("Bucket `{bucket}` deleted.");
